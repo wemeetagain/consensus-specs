@@ -344,92 +344,302 @@ Efficient algorithms for computing this object can be found in
 
 We first define helper functions:
 
-- `size_of(B)`, where `B` is a basic type: the length, in bytes, of the
-  serialized form of the basic type.
-- `chunk_count(type)`: calculate the amount of leaves for merkleization of the
-  type.
-  - all basic types: `1`
-  - `Bitlist[N]` and `Bitvector[N]`: `(N + 255) // 256` (dividing by chunk size,
-    rounding up)
-  - `List[B, N]` and `Vector[B, N]`, where `B` is a basic type:
-    `(N * size_of(B) + 31) // 32` (dividing by chunk size, rounding up)
-  - `List[C, N]` and `Vector[C, N]`, where `C` is a composite type: `N`
-  - containers: `len(fields)`
-- `get_active_fields(value)`, where `value` is of type
-  `ProgressiveContainer(active_fields)`: return `active_fields`.
-- `pack(values)`: Given ordered objects of the same basic type:
-  1. Serialize `values` into bytes.
-  2. If not aligned to a multiple of `BYTES_PER_CHUNK` bytes, right-pad with
-     zeroes to the next multiple.
-  3. Partition the bytes into `BYTES_PER_CHUNK`-byte chunks.
-  4. Return the chunks.
-- `pack_bits(bits)`: Given the bits of bitlist or bitvector, get
-  `bitfield_bytes` by packing them in bytes and aligning to the start. The
-  length-delimiting bit for bitlists is excluded. Then return
-  `pack(bitfield_bytes)`.
-- `next_pow_of_two(i)`: get the next power of 2 of `i`, if not already a power
-  of 2, with 0 mapping to 1. Examples:
-  `0->1, 1->1, 2->2, 3->4, 4->4, 6->8, 9->16`
-- `merkleize(chunks, limit=None)`: Given ordered `BYTES_PER_CHUNK`-byte chunks,
-  merkleize the chunks, and return the root:
-  - The merkleization depends on the effective input, which must be
-    padded/limited:
-    - if no limit: pad the `chunks` with zeroed chunks to
-      `next_pow_of_two(len(chunks))` (virtually for memory efficiency).
-    - if `limit >= len(chunks)`, pad the `chunks` with zeroed chunks to
-      `next_pow_of_two(limit)` (virtually for memory efficiency).
-    - if `limit < len(chunks)`: do not merkleize, input exceeds limit. Raise an
-      error instead.
-  - Then, merkleize the chunks (empty input is padded to 1 zero chunk):
-    - If `1` chunk: the root is the chunk itself.
-    - If `> 1` chunks: merkleize as binary tree.
-- `merkleize_progressive(chunks, num_leaves=1)`: Given ordered
-  `BYTES_PER_CHUNK`-byte chunks:
-  - The merkleization depends on the number of input chunks and is defined
-    recursively:
-    - If `len(chunks) == 0`: the root is a zero value, `Bytes32()`.
-    - Otherwise: compute the root using `hash(a, b)`
-      - `a`: Recursively merkleize chunks beyond `num_leaves` using
-        `merkleize_progressive(chunks[num_leaves:], num_leaves * 4)`.
-      - `b`: Merkleize the first up to `num_leaves` chunks as a binary tree
-        using `merkleize(chunks[:num_leaves], num_leaves)`.
-- `mix_in_active_fields`: Given a Merkle root `root` and an `active_fields`
-  configuration return `hash(root, pack_bits(active_fields))`. Note that
-  `active_fields` is restricted to ≤ 256 bits.
-- `mix_in_length`: Given a Merkle root `root` and a length `length` (`"uint256"`
-  little-endian serialization) return `hash(root, length)`.
-- `mix_in_selector`: Given a Merkle root `root` and a type selector `selector`
-  (`"uint8"` serialization) return `hash(root, selector)`.
+```python
+def size_of(B):
+    """
+    Return the length, in bytes, of the serialized form of the basic type.
+    """
+    if isinstance(B, type) and issubclass(B, (uint8, byte)):
+        return 1
+    elif isinstance(B, type) and issubclass(B, uint16):
+        return 2
+    elif isinstance(B, type) and issubclass(B, uint32):
+        return 4
+    elif isinstance(B, type) and issubclass(B, uint64):
+        return 8
+    elif isinstance(B, type) and issubclass(B, uint128):
+        return 16
+    elif isinstance(B, type) and issubclass(B, uint256):
+        return 32
+    elif isinstance(B, type) and issubclass(B, boolean):
+        return 1
+    else:
+        raise Exception(f"Type not supported: {B}")
+```
 
-We now define Merkleization `hash_tree_root(value)` of an object `value`
-recursively:
+```python
+def chunk_count(type):
+    """
+    Calculate the amount of leaves for merkleization of the type.
+    - all basic types: 1
+    - Bitlist[N] and Bitvector[N]: (N + 255) // 256 (dividing by chunk size, rounding up)
+    - List[B, N] and Vector[B, N], where B is a basic type: (N * size_of(B) + 31) // 32
+    - List[C, N] and Vector[C, N], where C is a composite type: N
+    - containers: len(fields)
+    """
+    # Basic types
+    if isinstance(type, type) and issubclass(type, (uint8, uint16, uint32, uint64, uint128, uint256, boolean, byte)):
+        return 1
+    # Bitlist and Bitvector
+    elif hasattr(type, 'is_bitlist') or hasattr(type, 'is_bitvector'):
+        return (type.limit + 255) // 256
+    # List and Vector of basic types
+    elif hasattr(type, 'elem_type') and hasattr(type, 'limit'):
+        if is_basic_type(type.elem_type):
+            return (type.limit * size_of(type.elem_type) + 31) // 32
+        else:
+            return type.limit
+    # Containers
+    elif hasattr(type, 'fields'):
+        return len(type.fields())
+    else:
+        raise Exception(f"Type not supported: {type}")
+```
 
-- `merkleize(pack(value))` if `value` is a basic object or a vector of basic
-  objects.
-- `merkleize(pack_bits(value), limit=chunk_count(type))` if `value` is a
-  bitvector.
-- `mix_in_length(merkleize(pack(value), limit=chunk_count(type)), len(value))`
-  if `value` is a list of basic objects.
-- `mix_in_length(merkleize_progressive(pack(value)), len(value))` if `value` is
-  a progressive list of basic objects.
-- `mix_in_length(merkleize(pack_bits(value), limit=chunk_count(type)), len(value))`
-  if `value` is a bitlist.
-- `mix_in_length(merkleize_progressive(pack_bits(value)), len(value))` if
-  `value` is a progressive bitlist.
-- `merkleize([hash_tree_root(element) for element in value])` if `value` is a
-  vector of composite objects or a container.
-- `mix_in_active_fields(merkleize_progressive([hash_tree_root(element) for element in value]), get_active_fields(value))`
-  if `value` is a progressive container.
-- `mix_in_length(merkleize([hash_tree_root(element) for element in value], limit=chunk_count(type)), len(value))`
-  if `value` is a list of composite objects.
-- `mix_in_length(merkleize_progressive([hash_tree_root(element) for element in value]), len(value))`
-  if `value` is a progressive list of composite objects.
-- `mix_in_selector(hash_tree_root(value.value), value.selector)` if `value` is
-  of union type, and `value.value` is not `None`
-- `mix_in_selector(Bytes32(), 0)` if `value` is of union type, and `value.value`
-  is `None`
-- `mix_in_selector(hash_tree_root(value.data), value.selector)` if `value` is of
-  compatible union type.
+```python
+def get_active_fields(value):
+    """
+    Extract active_fields from a ProgressiveContainer value.
+    """
+    return value.active_fields
+```
+
+```python
+def pack(values):
+    """
+    Given ordered objects of the same basic type:
+    1. Serialize values into bytes.
+    2. If not aligned to a multiple of BYTES_PER_CHUNK bytes, right-pad with zeroes to the next multiple.
+    3. Partition the bytes into BYTES_PER_CHUNK-byte chunks.
+    4. Return the chunks.
+    """
+    serialized_bytes = b''.join([serialize(value) for value in values])
+    # Pad to next multiple of BYTES_PER_CHUNK
+    padding_length = (BYTES_PER_CHUNK - len(serialized_bytes) % BYTES_PER_CHUNK) % BYTES_PER_CHUNK
+    serialized_bytes += b'\x00' * padding_length
+    # Partition into chunks
+    return [serialized_bytes[i:i + BYTES_PER_CHUNK] for i in range(0, len(serialized_bytes), BYTES_PER_CHUNK)]
+```
+
+```python
+def pack_bits(bits):
+    """
+    Given the bits of bitlist or bitvector, get bitfield_bytes by packing them in bytes
+    and aligning to the start. The length-delimiting bit for bitlists is excluded.
+    Then return pack(bitfield_bytes).
+    """
+    # Pack bits into bytes
+    bitfield_bytes = bytearray((len(bits) + 7) // 8)
+    for i, bit in enumerate(bits):
+        if bit:
+            bitfield_bytes[i // 8] |= 1 << (i % 8)
+    return pack(bitfield_bytes)
+```
+
+```python
+def next_pow_of_two(i):
+    """
+    Get the next power of 2 of i, if not already a power of 2, with 0 mapping to 1.
+    Examples: 0->1, 1->1, 2->2, 3->4, 4->4, 6->8, 9->16
+    """
+    if i == 0:
+        return 1
+    if i & (i - 1) == 0:  # i is already a power of 2
+        return i
+    return 1 << (i.bit_length())
+```
+
+```python
+def merkleize(chunks, limit=None):
+    """
+    Given ordered BYTES_PER_CHUNK-byte chunks, merkleize the chunks, and return the root.
+    The merkleization depends on the effective input, which must be padded/limited:
+    - if no limit: pad the chunks with zeroed chunks to next_pow_of_two(len(chunks)) (virtually for memory efficiency).
+    - if limit >= len(chunks), pad the chunks with zeroed chunks to next_pow_of_two(limit) (virtually for memory efficiency).
+    - if limit < len(chunks): do not merkleize, input exceeds limit. Raise an error instead.
+    Then, merkleize the chunks (empty input is padded to 1 zero chunk):
+    - If 1 chunk: the root is the chunk itself.
+    - If > 1 chunks: merkleize as binary tree.
+    """
+    # Determine effective limit
+    count = len(chunks)
+    if limit is None:
+        limit = count
+    
+    # Check that input doesn't exceed limit
+    if count > limit:
+        raise Exception(f"Input length {count} exceeds limit {limit}")
+    
+    # Handle empty input
+    if limit == 0:
+        return Bytes32()
+    
+    # Pad to next power of two
+    depth = max(count - 1, 0).bit_length()
+    max_depth = (limit - 1).bit_length()
+    
+    # Build merkle tree using zero hashes for virtual padding
+    # Initialize zero hashes for each depth
+    zero_hashes = [Bytes32()]
+    for layer in range(1, max_depth + 1):
+        zero_hashes.append(hash(zero_hashes[layer - 1] + zero_hashes[layer - 1]))
+    
+    # Special case: single chunk
+    if count == 1 and limit == 1:
+        return chunks[0]
+    
+    # Merkleize using a tree accumulator
+    tmp = [None] * (max_depth + 1)
+    
+    def merge(h, i):
+        j = 0
+        while True:
+            if i & (1 << j) == 0:
+                if i == count and j < depth:
+                    # Keep going if we are complementing the void to the next power of 2
+                    h = hash(h + zero_hashes[j])
+                else:
+                    break
+            else:
+                h = hash(tmp[j] + h)
+            j += 1
+        tmp[j] = h
+    
+    # Merge in leaf by leaf
+    for i in range(count):
+        merge(chunks[i], i)
+    
+    # Complement with 0 if empty, or if not the right power of 2
+    if (1 << depth) != count:
+        merge(zero_hashes[0], count)
+    
+    # The next power of two may be smaller than the ultimate virtual size,
+    # complement with zero-hashes at each depth
+    for j in range(depth, max_depth):
+        tmp[j + 1] = hash(tmp[j] + zero_hashes[j])
+    
+    return tmp[max_depth]
+```
+
+```python
+def merkleize_progressive(chunks, num_leaves=1):
+    """
+    Given ordered BYTES_PER_CHUNK-byte chunks:
+    The merkleization depends on the number of input chunks and is defined recursively:
+    - If len(chunks) == 0: the root is a zero value, Bytes32().
+    - Otherwise: compute the root using hash(a, b)
+      - a: Recursively merkleize chunks beyond num_leaves using merkleize_progressive(chunks[num_leaves:], num_leaves * 4).
+      - b: Merkleize the first up to num_leaves chunks as a binary tree using merkleize(chunks[:num_leaves], num_leaves).
+    """
+    if len(chunks) == 0:
+        return Bytes32()
+    
+    # Recursively merkleize chunks beyond num_leaves
+    a = merkleize_progressive(chunks[num_leaves:], num_leaves * 4)
+    
+    # Merkleize the first up to num_leaves chunks
+    b = merkleize(chunks[:num_leaves], num_leaves)
+    
+    return hash(a + b)
+```
+
+```python
+def mix_in_active_fields(root, active_fields):
+    """
+    Given a Merkle root and an active_fields configuration, return hash(root, pack_bits(active_fields)).
+    Note that active_fields is restricted to ≤ 256 bits.
+    """
+    return hash(root + pack_bits(active_fields)[0])
+```
+
+```python
+def mix_in_length(root, length):
+    """
+    Given a Merkle root and a length (uint256 little-endian serialization), return hash(root, length).
+    """
+    return hash(root + length.to_bytes(32, 'little'))
+```
+
+```python
+def mix_in_selector(root, selector):
+    """
+    Given a Merkle root and a type selector (uint8 serialization), return hash(root, selector).
+    """
+    return hash(root + selector.to_bytes(1, 'little') + b'\x00' * 31)
+```
+
+We now define Merkleization `hash_tree_root(value)` of an object `value` recursively:
+
+```python
+def hash_tree_root(value):
+    """
+    Compute the hash tree root of an SSZ object.
+    """
+    # Get the type of the value
+    typ = type(value)
+    
+    # Basic object or vector of basic objects
+    if is_basic_type(typ) or (is_vector_type(typ) and is_basic_type(typ.elem_type)):
+        return merkleize(pack(value))
+    
+    # Bitvector
+    if is_bitvector_type(typ):
+        return merkleize(pack_bits(value), limit=chunk_count(typ))
+    
+    # List of basic objects
+    if is_list_type(typ) and is_basic_type(typ.elem_type):
+        return mix_in_length(merkleize(pack(value), limit=chunk_count(typ)), len(value))
+    
+    # Progressive list of basic objects
+    if is_progressive_list_type(typ) and is_basic_type(typ.elem_type):
+        return mix_in_length(merkleize_progressive(pack(value)), len(value))
+    
+    # Bitlist
+    if is_bitlist_type(typ):
+        return mix_in_length(merkleize(pack_bits(value), limit=chunk_count(typ)), len(value))
+    
+    # Progressive bitlist
+    if is_progressive_bitlist_type(typ):
+        return mix_in_length(merkleize_progressive(pack_bits(value)), len(value))
+    
+    # Vector of composite objects or container
+    if (is_vector_type(typ) and not is_basic_type(typ.elem_type)) or is_container_type(typ):
+        return merkleize([hash_tree_root(element) for element in value])
+    
+    # Progressive container
+    if is_progressive_container_type(typ):
+        return mix_in_active_fields(
+            merkleize_progressive([hash_tree_root(element) for element in value]),
+            get_active_fields(value)
+        )
+    
+    # List of composite objects
+    if is_list_type(typ) and not is_basic_type(typ.elem_type):
+        return mix_in_length(
+            merkleize([hash_tree_root(element) for element in value], limit=chunk_count(typ)),
+            len(value)
+        )
+    
+    # Progressive list of composite objects
+    if is_progressive_list_type(typ) and not is_basic_type(typ.elem_type):
+        return mix_in_length(
+            merkleize_progressive([hash_tree_root(element) for element in value]),
+            len(value)
+        )
+    
+    # Union type
+    if is_union_type(typ):
+        if value.value is None:
+            return mix_in_selector(Bytes32(), 0)
+        else:
+            return mix_in_selector(hash_tree_root(value.value), value.selector)
+    
+    # Compatible union type
+    if is_compatible_union_type(typ):
+        return mix_in_selector(hash_tree_root(value.data), value.selector)
+    
+    raise Exception(f"hash_tree_root not implemented for type {typ}")
+```
 
 ## Summaries and expansions
 
