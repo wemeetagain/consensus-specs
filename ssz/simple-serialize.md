@@ -584,23 +584,24 @@ def merkleize(chunks, limit=None):
     if count > limit:
         raise Exception(f"Input length {count} exceeds limit {limit}")
     
-    # Handle empty input
+    # Handle empty input - pad to 1 zero chunk
     if limit == 0:
         return b'\x00' * 32
     
+    # If count is 0 but limit > 0, we need to merkleize zero chunks up to limit
+    if count == 0:
+        count = 1
+        chunks = [b'\x00' * 32]
+    
     # Pad to next power of two
     depth = max(count - 1, 0).bit_length()
-    max_depth = (limit - 1).bit_length()
+    max_depth = max((limit - 1).bit_length(), 0)
     
     # Build merkle tree using zero hashes for virtual padding
     # Initialize zero hashes for each depth
     zero_hashes = [b'\x00' * 32]
     for layer in range(1, max_depth + 1):
         zero_hashes.append(hash(zero_hashes[layer - 1] + zero_hashes[layer - 1]))
-    
-    # Special case: single chunk
-    if count == 1 and limit == 1:
-        return chunks[0]
     
     # Merkleize using a tree accumulator
     tmp = [None] * (max_depth + 1)
@@ -623,7 +624,7 @@ def merkleize(chunks, limit=None):
     for i in range(count):
         merge(chunks[i], i)
     
-    # Complement with 0 if empty, or if not the right power of 2
+    # Complement with 0 if not the right power of 2
     if (1 << depth) != count:
         merge(zero_hashes[0], count)
     
@@ -663,7 +664,10 @@ def mix_in_active_fields(root, active_fields):
     Given a Merkle root and an active_fields configuration, return hash(root, pack_bits(active_fields)).
     Note that active_fields is restricted to ≤ 256 bits.
     """
-    return hash(root + pack_bits(active_fields)[0])
+    packed = pack_bits(active_fields)
+    # active_fields is always restricted to ≤ 256 bits, so it fits in one chunk
+    active_fields_chunk = packed[0] if packed else b'\x00' * 32
+    return hash(root + active_fields_chunk)
 ```
 
 ```python
