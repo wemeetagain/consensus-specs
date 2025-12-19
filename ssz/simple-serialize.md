@@ -469,18 +469,29 @@ def chunk_count(type):
     # Basic types
     if isinstance(type, type) and issubclass(type, (uint8, uint16, uint32, uint64, uint128, uint256, boolean, byte)):
         return 1
-    # Bitlist and Bitvector
-    elif hasattr(type, 'is_bitlist') or hasattr(type, 'is_bitvector'):
+    # Bitvector
+    elif hasattr(type, 'is_bitvector'):
+        return (type.vector_length + 255) // 256
+    # Bitlist
+    elif hasattr(type, 'is_bitlist'):
         return (type.limit + 255) // 256
-    # List and Vector of basic types
-    elif hasattr(type, 'elem_type') and hasattr(type, 'limit'):
+    # Vector of basic types
+    elif hasattr(type, 'vector_length') and hasattr(type, 'elem_type'):
+        if is_basic_type(type.elem_type):
+            return (type.vector_length * size_of(type.elem_type) + 31) // 32
+        else:
+            return type.vector_length
+    # List of basic types (not progressive)
+    elif hasattr(type, 'limit') and hasattr(type, 'elem_type') and not hasattr(type, 'is_progressive'):
         if is_basic_type(type.elem_type):
             return (type.limit * size_of(type.elem_type) + 31) // 32
         else:
             return type.limit
     # Containers
     elif hasattr(type, 'fields'):
-        return len(type.fields())
+        # Handle both callable and non-callable fields
+        fields = type.fields() if callable(type.fields) else type.fields
+        return len(fields)
     else:
         raise Exception(f"Type not supported: {type}")
 ```
@@ -501,6 +512,8 @@ def pack(values):
     2. If not aligned to a multiple of BYTES_PER_CHUNK bytes, right-pad with zeroes to the next multiple.
     3. Partition the bytes into BYTES_PER_CHUNK-byte chunks.
     4. Return the chunks.
+    
+    Note: This function assumes serialize() is defined for serializing individual values.
     """
     # Handle both sequences of values and raw bytes
     if isinstance(values, (bytes, bytearray)):
@@ -508,12 +521,13 @@ def pack(values):
     else:
         serialized_bytes = b''.join([serialize(value) for value in values])
     
-    # Pad to next multiple of BYTES_PER_CHUNK
+    # Handle empty input
     if len(serialized_bytes) == 0:
-        serialized_bytes = b'\x00' * BYTES_PER_CHUNK
-    else:
-        padding_length = (BYTES_PER_CHUNK - len(serialized_bytes) % BYTES_PER_CHUNK) % BYTES_PER_CHUNK
-        serialized_bytes += b'\x00' * padding_length
+        return []
+    
+    # Pad to next multiple of BYTES_PER_CHUNK
+    padding_length = (BYTES_PER_CHUNK - len(serialized_bytes) % BYTES_PER_CHUNK) % BYTES_PER_CHUNK
+    serialized_bytes += b'\x00' * padding_length
     
     # Partition into chunks
     return [serialized_bytes[i:i + BYTES_PER_CHUNK] for i in range(0, len(serialized_bytes), BYTES_PER_CHUNK)]
@@ -558,6 +572,8 @@ def merkleize(chunks, limit=None):
     Then, merkleize the chunks (empty input is padded to 1 zero chunk):
     - If 1 chunk: the root is the chunk itself.
     - If > 1 chunks: merkleize as binary tree.
+    
+    Note: This function assumes hash() is the SHA-256 hash function as defined in SSZ.
     """
     # Determine effective limit
     count = len(chunks)
@@ -570,7 +586,7 @@ def merkleize(chunks, limit=None):
     
     # Handle empty input
     if limit == 0:
-        return Bytes32()
+        return b'\x00' * 32
     
     # Pad to next power of two
     depth = max(count - 1, 0).bit_length()
@@ -578,7 +594,7 @@ def merkleize(chunks, limit=None):
     
     # Build merkle tree using zero hashes for virtual padding
     # Initialize zero hashes for each depth
-    zero_hashes = [Bytes32()]
+    zero_hashes = [b'\x00' * 32]
     for layer in range(1, max_depth + 1):
         zero_hashes.append(hash(zero_hashes[layer - 1] + zero_hashes[layer - 1]))
     
@@ -624,13 +640,13 @@ def merkleize_progressive(chunks, num_leaves=1):
     """
     Given ordered BYTES_PER_CHUNK-byte chunks:
     The merkleization depends on the number of input chunks and is defined recursively:
-    - If len(chunks) == 0: the root is a zero value, Bytes32().
+    - If len(chunks) == 0: the root is a zero value (32 zero bytes).
     - Otherwise: compute the root using hash(a, b)
       - a: Recursively merkleize chunks beyond num_leaves using merkleize_progressive(chunks[num_leaves:], num_leaves * 4).
       - b: Merkleize the first up to num_leaves chunks as a binary tree using merkleize(chunks[:num_leaves], num_leaves).
     """
     if len(chunks) == 0:
-        return Bytes32()
+        return b'\x00' * 32
     
     # Recursively merkleize chunks beyond num_leaves
     a = merkleize_progressive(chunks[num_leaves:], num_leaves * 4)
@@ -732,7 +748,7 @@ def hash_tree_root(value):
     # Union type
     if is_union_type(typ):
         if value.value is None:
-            return mix_in_selector(Bytes32(), 0)
+            return mix_in_selector(b'\x00' * 32, 0)
         else:
             return mix_in_selector(hash_tree_root(value.value), value.selector)
     
