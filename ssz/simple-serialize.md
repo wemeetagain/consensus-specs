@@ -590,8 +590,8 @@ def merkleize(chunks, limit=None):
     
     # If count is 0 but limit > 0, we need to merkleize zero chunks up to limit
     if count == 0:
-        count = 1
         chunks = [b'\x00' * 32]
+        count = 1
     
     # Pad to next power of two
     depth = max(count - 1, 0).bit_length()
