@@ -502,10 +502,19 @@ def pack(values):
     3. Partition the bytes into BYTES_PER_CHUNK-byte chunks.
     4. Return the chunks.
     """
-    serialized_bytes = b''.join([serialize(value) for value in values])
+    # Handle both sequences of values and raw bytes
+    if isinstance(values, (bytes, bytearray)):
+        serialized_bytes = bytes(values)
+    else:
+        serialized_bytes = b''.join([serialize(value) for value in values])
+    
     # Pad to next multiple of BYTES_PER_CHUNK
-    padding_length = (BYTES_PER_CHUNK - len(serialized_bytes) % BYTES_PER_CHUNK) % BYTES_PER_CHUNK
-    serialized_bytes += b'\x00' * padding_length
+    if len(serialized_bytes) == 0:
+        serialized_bytes = b'\x00' * BYTES_PER_CHUNK
+    else:
+        padding_length = (BYTES_PER_CHUNK - len(serialized_bytes) % BYTES_PER_CHUNK) % BYTES_PER_CHUNK
+        serialized_bytes += b'\x00' * padding_length
+    
     # Partition into chunks
     return [serialized_bytes[i:i + BYTES_PER_CHUNK] for i in range(0, len(serialized_bytes), BYTES_PER_CHUNK)]
 ```
@@ -667,8 +676,12 @@ def hash_tree_root(value):
     # Get the type of the value
     typ = type(value)
     
-    # Basic object or vector of basic objects
-    if is_basic_type(typ) or (is_vector_type(typ) and is_basic_type(typ.elem_type)):
+    # Basic object
+    if is_basic_type(typ):
+        return merkleize(pack([value]))
+    
+    # Vector of basic objects
+    if is_vector_type(typ) and is_basic_type(typ.elem_type):
         return merkleize(pack(value))
     
     # Bitvector
