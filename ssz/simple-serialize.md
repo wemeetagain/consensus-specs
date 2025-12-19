@@ -345,6 +345,95 @@ Efficient algorithms for computing this object can be found in
 We first define helper functions:
 
 ```python
+def is_basic_type(typ):
+    """
+    Check if a type is a basic SSZ type.
+    """
+    return (isinstance(typ, type) and 
+            issubclass(typ, (uint8, uint16, uint32, uint64, uint128, uint256, boolean, byte)))
+```
+
+```python
+def is_vector_type(typ):
+    """
+    Check if a type is a Vector type.
+    """
+    return hasattr(typ, 'vector_length')
+```
+
+```python
+def is_list_type(typ):
+    """
+    Check if a type is a List type (not ProgressiveList).
+    """
+    return hasattr(typ, 'limit') and not hasattr(typ, 'is_progressive')
+```
+
+```python
+def is_progressive_list_type(typ):
+    """
+    Check if a type is a ProgressiveList type.
+    """
+    return hasattr(typ, 'is_progressive') and hasattr(typ, 'elem_type')
+```
+
+```python
+def is_bitvector_type(typ):
+    """
+    Check if a type is a Bitvector type.
+    """
+    return hasattr(typ, 'is_bitvector')
+```
+
+```python
+def is_bitlist_type(typ):
+    """
+    Check if a type is a Bitlist type.
+    """
+    return hasattr(typ, 'is_bitlist')
+```
+
+```python
+def is_progressive_bitlist_type(typ):
+    """
+    Check if a type is a ProgressiveBitlist type.
+    """
+    return hasattr(typ, 'is_progressive_bitlist')
+```
+
+```python
+def is_container_type(typ):
+    """
+    Check if a type is a Container type.
+    """
+    return hasattr(typ, 'fields') and not hasattr(typ, 'is_progressive_container')
+```
+
+```python
+def is_progressive_container_type(typ):
+    """
+    Check if a type is a ProgressiveContainer type.
+    """
+    return hasattr(typ, 'is_progressive_container')
+```
+
+```python
+def is_union_type(typ):
+    """
+    Check if a type is a Union type.
+    """
+    return hasattr(typ, 'type_options') and not hasattr(typ, 'is_compatible_union')
+```
+
+```python
+def is_compatible_union_type(typ):
+    """
+    Check if a type is a CompatibleUnion type.
+    """
+    return hasattr(typ, 'is_compatible_union')
+```
+
+```python
 def size_of(B):
     """
     Return the length, in bytes, of the serialized form of the basic type.
