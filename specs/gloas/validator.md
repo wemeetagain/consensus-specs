@@ -93,19 +93,7 @@ All validator responsibilities remain unchanged other than the following:
 
 ### Attestation
 
-The attestation deadline is changed with `ATTESTATION_DUE_BPS_GLOAS`. Moreover,
-the `attestation.data.index` field is now used to signal the payload status of
-the block being attested to (`attestation.data.beacon_block_root`). With the
-alias `data = attestation.data`, the validator should set this field as follows:
-
-- If `block.slot == current_slot` (i.e., `data.slot`), then always set
-  `data.index = 0`.
-- Otherwise, set `data.index` based on the payload status in the validator's
-  fork-choice:
-  - Set `data.index = 0` to signal that the payload is not present in the
-    canonical chain (payload status is `EMPTY` in the fork-choice).
-  - Set `data.index = 1` to signal that the payload is present in the canonical
-    chain (payload status is `FULL` in the fork-choice).
+The attestation deadline is changed with `ATTESTATION_DUE_BPS_GLOAS`.
 
 ### Sync Committee participations
 
@@ -195,8 +183,8 @@ top of a `state` MUST take the following actions in order to construct the
   - The builder balance can cover the `bid.value`.
   - The `bid.slot` is for the proposal block slot.
   - The `bid.parent_block_hash` equals
-    `state.latest_execution_payload_bid.block_hash` if the parent block has been
-    verified (`block.parent_root in store.payloads`), otherwise
+    `state.latest_execution_payload_bid.block_hash` if
+    `should_extend_payload(store, block.parent_root)`, otherwise
     `state.latest_execution_payload_bid.parent_block_hash`.
   - The `bid.parent_block_root` equals the current block's `parent_root`.
 - Select one bid and set
@@ -239,8 +227,8 @@ parent's execution payload. The proposer constructs this field as follows:
 ##### ExecutionPayload
 
 *Note*: `prepare_execution_payload` is modified in Gloas to take `store` as an
-additional parameter. It consults `store.payloads` to determine whether the
-parent block's execution payload has been verified, selecting both the
+additional parameter. It consults `should_extend_payload` to determine whether
+the parent block's execution payload should be extended, selecting both the
 withdrawals source and the execution head for the new payload.
 
 ```python
@@ -255,7 +243,8 @@ def prepare_execution_payload(
 ) -> Optional[PayloadId]:
     # [New in Gloas:EIP7732]
     parent_bid = state.latest_execution_payload_bid
-    if hash_tree_root(state.latest_block_header) in store.payloads:
+    parent_root = hash_tree_root(state.latest_block_header)
+    if should_extend_payload(store, parent_root):
         withdrawals = get_expected_withdrawals(state).withdrawals
         head_block_hash = parent_bid.block_hash
     else:
