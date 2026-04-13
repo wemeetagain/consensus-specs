@@ -187,14 +187,11 @@ def is_payload_data_available(store: Store, root: Root) -> bool:
 ### New `should_extend_payload`
 
 *Note*: `should_extend_payload` decides whether to extend the payload for the
-beacon block `root`. For the previous slot's block, the payload must be locally
-verified and a majority of the PTC must have voted it as timely with available
-data. For older blocks, it is sufficient that the payload is locally verified.
+beacon block `root`. It extends when the PTC has confirmed the payload as timely
+with available data.
 
 ```python
 def should_extend_payload(store: Store, root: Root) -> bool:
-    if store.blocks[root].slot + 1 != get_current_slot(store):
-        return root in store.payloads
     return is_payload_timely(store, root) and is_payload_data_available(store, root)
 ```
 
@@ -239,15 +236,12 @@ def should_apply_proposer_boost(store: Store) -> bool:
 ```python
 def get_weight(store: Store, root: Root) -> Gwei:
     # [New in Gloas:EIP7732]
-    # If the parent is from the previous slot and the PTC confirmed its
-    # payload, a block that does not extend it receives zero weight
     block = store.blocks[root]
     parent_root = block.parent_root
     parent_bid = store.blocks[parent_root].body.signed_execution_payload_bid.message
     bid = block.body.signed_execution_payload_bid.message
     if (
-        store.blocks[parent_root].slot + 1 == get_current_slot(store)
-        and bid.parent_block_hash != parent_bid.block_hash
+        bid.parent_block_hash != parent_bid.block_hash
         and is_payload_timely(store, parent_root)
         and is_payload_data_available(store, parent_root)
     ):

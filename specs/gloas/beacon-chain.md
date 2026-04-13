@@ -1533,8 +1533,6 @@ def process_payload_attestation(
 
     # Check that the attestation is for the parent beacon block
     assert data.beacon_block_root == state.latest_block_header.parent_root
-    # Check that the attestation is for the previous slot
-    assert data.slot + 1 == state.slot
     # Verify signature
     indexed_payload_attestation = get_indexed_payload_attestation(state, payload_attestation)
     assert is_valid_indexed_payload_attestation(state, indexed_payload_attestation)
