@@ -218,10 +218,10 @@ parent's execution payload. The proposer constructs this field as follows:
 
 - If the parent block is pre-Gloas (first Gloas block), set
   `parent_execution_requests` to an empty `ExecutionRequests()`.
-- If the parent block was FULL (i.e., the execution payload was delivered and
-  verified), set `parent_execution_requests` to the `ExecutionRequests` from the
-  parent's `ExecutionPayloadEnvelope`.
-- If the parent block was EMPTY (i.e., no execution payload was delivered), set
+- If the parent's execution payload was delivered and verified
+  (`block.parent_root in store.payloads`), set `parent_execution_requests` to
+  the `ExecutionRequests` from the parent's `ExecutionPayloadEnvelope`.
+- If the parent's execution payload was not delivered, set
   `parent_execution_requests` to an empty `ExecutionRequests()`.
 
 ##### ExecutionPayload

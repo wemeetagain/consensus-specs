@@ -919,7 +919,7 @@ def process_parent_execution_payload(state: BeaconState, block: BeaconBlock) -> 
     is_parent_block_full = bid.parent_block_hash == parent_bid.block_hash
 
     if not is_parent_block_full:
-        # Parent was EMPTY -- no execution requests expected
+        # Not extending parent's payload -- no execution requests expected
         assert block.body.parent_execution_requests == ExecutionRequests()
         return
 
