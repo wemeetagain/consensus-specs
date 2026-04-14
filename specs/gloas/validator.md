@@ -207,6 +207,11 @@ Up to `MAX_PAYLOAD_ATTESTATIONS` aggregate payload attestations can be included
 in the block. The block proposer MUST take the following actions in order to
 construct the `payload_attestations` field in `BeaconBlockBody`:
 
+*Note*: These block-carried payload attestations remain previous-slot only.
+Persisting PTC advice across skipped slots comes from the local fork-choice
+store while the parent remains within the PTC advisory window; later blocks do
+not reconstruct fresh aggregates for older parents.
+
 - Listen to the `payload_attestation_message` gossip global topic.
 - Added payload attestations MUST satisfy the verification conditions found in
   payload attestation gossip validation and payload attestation processing.

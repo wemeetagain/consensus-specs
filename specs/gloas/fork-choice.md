@@ -13,6 +13,7 @@
   - [New `is_payload_timely`](#new-is_payload_timely)
   - [New `is_payload_data_available`](#new-is_payload_data_available)
   - [New `can_extend_payload`](#new-can_extend_payload)
+  - [New `is_within_ptc_advisory_window`](#new-is_within_ptc_advisory_window)
   - [New `should_extend_payload`](#new-should_extend_payload)
   - [New `is_ptc_disrespecting_block`](#new-is_ptc_disrespecting_block)
   - [New `should_apply_proposer_boost`](#new-should_apply_proposer_boost)
@@ -198,16 +199,34 @@ def can_extend_payload(store: Store, root: Root) -> bool:
     return root in store.payloads
 ```
 
+### New `is_within_ptc_advisory_window`
+
+```python
+def is_within_ptc_advisory_window(store: Store, root: Root) -> bool:
+    """
+    Return whether the locally observed PTC view for beacon block ``root``
+    remains within the reconstructible advisory window.
+    """
+    block_epoch = compute_epoch_at_slot(store.blocks[root].slot)
+    current_epoch = get_current_store_epoch(store)
+    return block_epoch + 1 >= current_epoch
+```
+
 ### New `should_extend_payload`
 
 *Note*: `should_extend_payload` returns whether fork choice prefers extending
 the payload for the beacon block `root`. If `can_extend_payload(store, root)` is
-`False`, the payload cannot be extended regardless of the PTC view.
+`False`, the payload cannot be extended regardless of the PTC view. This PTC
+preference is advisory and only applies while ``root`` remains within the
+reconstructible PTC window. Once ``root`` is older than the store's previous
+epoch, the prior PTC view is considered stale and no longer constrains FULL vs
+EMPTY.
 
 ```python
 def should_extend_payload(store: Store, root: Root) -> bool:
     return (
         can_extend_payload(store, root)
+        and is_within_ptc_advisory_window(store, root)
         and is_payload_timely(store, root)
         and is_payload_data_available(store, root)
     )
