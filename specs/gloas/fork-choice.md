@@ -13,8 +13,10 @@
   - [New `is_payload_timely`](#new-is_payload_timely)
   - [New `is_payload_data_available`](#new-is_payload_data_available)
   - [New `should_extend_payload`](#new-should_extend_payload)
+  - [New `is_ptc_disrespecting_block`](#new-is_ptc_disrespecting_block)
   - [New `should_apply_proposer_boost`](#new-should_apply_proposer_boost)
   - [Modified `get_weight`](#modified-get_weight)
+  - [Modified `get_head`](#modified-get_head)
   - [Modified `record_block_timeliness`](#modified-record_block_timeliness)
   - [Modified `update_proposer_boost_root`](#modified-update_proposer_boost_root)
   - [Modified `is_head_late`](#modified-is_head_late)
@@ -195,6 +197,24 @@ def should_extend_payload(store: Store, root: Root) -> bool:
     return is_payload_timely(store, root) and is_payload_data_available(store, root)
 ```
 
+### New `is_ptc_disrespecting_block`
+
+```python
+def is_ptc_disrespecting_block(store: Store, root: Root) -> bool:
+    """
+    Return whether ``root`` reorders away from a parent payload that fork choice
+    says should be extended.
+    """
+    block = store.blocks[root]
+    parent_root = block.parent_root
+    parent_bid = store.blocks[parent_root].body.signed_execution_payload_bid.message
+    bid = block.body.signed_execution_payload_bid.message
+    return (
+        should_extend_payload(store, parent_root)
+        and bid.parent_block_hash != parent_bid.block_hash
+    )
+```
+
 ### New `should_apply_proposer_boost`
 
 ```python
@@ -235,18 +255,6 @@ def should_apply_proposer_boost(store: Store) -> bool:
 
 ```python
 def get_weight(store: Store, root: Root) -> Gwei:
-    # [New in Gloas:EIP7732]
-    block = store.blocks[root]
-    parent_root = block.parent_root
-    parent_bid = store.blocks[parent_root].body.signed_execution_payload_bid.message
-    bid = block.body.signed_execution_payload_bid.message
-    if (
-        bid.parent_block_hash != parent_bid.block_hash
-        and is_payload_timely(store, parent_root)
-        and is_payload_data_available(store, parent_root)
-    ):
-        return Gwei(0)
-
     state = store.checkpoint_states[store.justified_checkpoint]
     attestation_score = get_attestation_score(store, root, state)
     # [Modified in Gloas:EIP7732]
@@ -261,6 +269,29 @@ def get_weight(store: Store, root: Root) -> Gwei:
     if get_ancestor(store, store.proposer_boost_root, store.blocks[root].slot) == root:
         proposer_score = get_proposer_score(store)
     return attestation_score + proposer_score
+```
+
+### Modified `get_head`
+
+*Note*: `get_head` is modified to avoid descending into a child that reorders
+away from a parent payload which fork choice says should be extended. If all
+children of the current head are filtered out in this way, the parent remains
+the head.
+
+```python
+def get_head(store: Store) -> Root:
+    # Get filtered block tree that only includes viable branches
+    blocks = get_filtered_block_tree(store)
+    # Execute the LMD-GHOST fork choice
+    head = store.justified_checkpoint.root
+    while True:
+        children = [root for root in blocks.keys() if blocks[root].parent_root == head]
+        children = [root for root in children if not is_ptc_disrespecting_block(store, root)]
+        if len(children) == 0:
+            return head
+        # Sort by latest attesting balance with ties broken lexicographically
+        # Ties broken by favoring block with lexicographically higher root
+        head = max(children, key=lambda root: (get_weight(store, root), root))
 ```
 
 ### Modified `record_block_timeliness`
