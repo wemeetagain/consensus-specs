@@ -240,14 +240,14 @@ def get_weight(store: Store, root: Root) -> Gwei:
     parent_root = block.parent_root
     parent_bid = store.blocks[parent_root].body.signed_execution_payload_bid.message
     bid = block.body.signed_execution_payload_bid.message
-    state = store.checkpoint_states[store.justified_checkpoint]
     if (
         bid.parent_block_hash != parent_bid.block_hash
         and is_payload_timely(store, parent_root)
         and is_payload_data_available(store, parent_root)
     ):
-        return get_attestation_score(store, parent_root, state)
+        return Gwei(0)
 
+    state = store.checkpoint_states[store.justified_checkpoint]
     attestation_score = get_attestation_score(store, root, state)
     # [Modified in Gloas:EIP7732]
     if not should_apply_proposer_boost(store):
