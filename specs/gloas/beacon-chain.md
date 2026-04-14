@@ -678,20 +678,10 @@ def get_attestation_participation_flag_indices(
     target_root_matches = data.target.root == target_root
     is_matching_target = is_matching_source and target_root_matches
 
-    # [New in Gloas:EIP7732]
-    if is_attestation_same_slot(state, data):
-        assert data.index == 0
-        payload_matches = True
-    else:
-        slot_index = data.slot % SLOTS_PER_HISTORICAL_ROOT
-        payload_index = state.execution_payload_availability[slot_index]
-        payload_matches = data.index == payload_index
-
     # Matching head
     head_root = get_block_root_at_slot(state, data.slot)
     head_root_matches = data.beacon_block_root == head_root
-    # [Modified in Gloas:EIP7732]
-    is_matching_head = is_matching_target and head_root_matches and payload_matches
+    is_matching_head = is_matching_target and head_root_matches
 
     assert is_matching_source
 
@@ -708,7 +698,8 @@ def get_attestation_participation_flag_indices(
 
 #### New `get_ptc`
 
-*Note*: `get_ptc` uses the cached `ptc_window` for lookups.
+*Note*: `get_ptc` uses the cached `ptc_window` for lookups in the previous
+epoch, the current epoch, and the configured future lookahead.
 
 ```python
 def get_ptc(state: BeaconState, slot: Slot) -> Vector[ValidatorIndex, PTC_SIZE]:
@@ -1434,8 +1425,7 @@ def process_voluntary_exit(state: BeaconState, signed_voluntary_exit: SignedVolu
 ###### Modified `process_attestation`
 
 *Note*: The function is modified to track the weight for pending builder
-payments and to use the `index` field in the `AttestationData` to signal the
-payload availability.
+payments.
 
 ```python
 def process_attestation(state: BeaconState, attestation: Attestation) -> None:
@@ -1445,7 +1435,7 @@ def process_attestation(state: BeaconState, attestation: Attestation) -> None:
     assert data.slot + MIN_ATTESTATION_INCLUSION_DELAY <= state.slot
 
     # [Modified in Gloas:EIP7732]
-    assert data.index < 2
+    assert data.index == 0
     committee_indices = get_committee_indices(attestation.committee_bits)
     committee_offset = 0
     for committee_index in committee_indices:
@@ -1533,6 +1523,14 @@ def process_payload_attestation(
 
     # Check that the attestation is for the parent beacon block
     assert data.beacon_block_root == state.latest_block_header.parent_root
+    # Check that the attested slot remains within the reconstructible past-slot
+    # PTC window
+    assert data.slot < state.slot
+    assert compute_epoch_at_slot(data.slot) in (get_previous_epoch(state), get_current_epoch(state))
+    # Check that ``data.slot`` is the actual slot of the attested parent block
+    assert get_block_root_at_slot(state, data.slot) == data.beacon_block_root
+    if data.slot != 0:
+        assert get_block_root_at_slot(state, Slot(data.slot - 1)) != data.beacon_block_root
     # Verify signature
     indexed_payload_attestation = get_indexed_payload_attestation(state, payload_attestation)
     assert is_valid_indexed_payload_attestation(state, indexed_payload_attestation)

@@ -207,22 +207,25 @@ Up to `MAX_PAYLOAD_ATTESTATIONS` aggregate payload attestations can be included
 in the block. The block proposer MUST take the following actions in order to
 construct the `payload_attestations` field in `BeaconBlockBody`:
 
-*Note*: These block-carried payload attestations remain previous-slot only.
-Persisting PTC advice across skipped slots comes from the local fork-choice
-store while the parent remains within the PTC advisory window; later blocks do
-not reconstruct fresh aggregates for older parents.
+*Note*: These block-carried payload attestations are for `block.parent_root`.
+Across skipped slots, proposers MAY therefore include cached payload
+attestations for an older direct parent, provided the attested slot remains in
+the current or previous epoch of `state`, matching the past-slot reach of
+`get_ptc(state, data.slot)`.
 
 - Listen to the `payload_attestation_message` gossip global topic.
-- Added payload attestations MUST satisfy the verification conditions found in
-  payload attestation gossip validation and payload attestation processing.
+- Added payload attestations MUST be constructed from payload attestation
+  messages that individually satisfied payload attestation gossip validation
+  when received, and MUST satisfy payload attestation processing when included
+  in the block.
   - The `data.beacon_block_root` corresponds to `block.parent_root`.
-  - The slot of the parent block is exactly one slot before the proposing slot.
+  - The `data.slot` is the slot of the attested parent block and remains in the
+    current or previous epoch of `state`.
   - The signature of the payload attestation data message verifies correctly.
 - The proposer MUST aggregate all payload attestations with the same data into a
   given `PayloadAttestation` object. For this the proposer needs to fill the
   `aggregation_bits` field by using the relative position of the validator
-  indices with respect to the PTC that is obtained from
-  `get_ptc(state, Slot(block_slot - 1))`.
+  indices with respect to the PTC that is obtained from `get_ptc(state, data.slot)`.
 
 ##### Parent execution requests
 
@@ -314,6 +317,9 @@ The validator creates `payload_attestation_message` as follows:
 - If a previously seen `SignedExecutionPayloadEnvelope` references the block
   with root `data.beacon_block_root`, set `data.payload_present` to `True`;
   otherwise, set `data.payload_present` to `False`.
+- If the validator locally determined that the corresponding blob data is
+  available, set `data.blob_data_available` to `True`; otherwise, set it to
+  `False`.
 - Set `payload_attestation_message.validator_index = validator_index` where
   `validator_index` is the validator chosen to submit. The private key mapping
   to `state.validators[validator_index].pubkey` is used to sign the payload

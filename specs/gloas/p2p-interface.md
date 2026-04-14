@@ -232,24 +232,9 @@ payload attestation.
 
 ###### `beacon_aggregate_and_proof`
 
-Let `block` be the beacon block corresponding to
-`aggregate.data.beacon_block_root`.
-
-The following validations are added:
-
-- _[REJECT]_ `aggregate.data.index < 2`.
-- _[REJECT]_ `aggregate.data.index == 0` if `block.slot == aggregate.data.slot`.
-- _[REJECT]_ If `aggregate.data.index == 1` (payload present for a past block)
-  the corresponding execution payload for `block` passes validation.
-- _[IGNORE]_ When `aggregate.data.index == 1` (payload present for a past
-  block), the corresponding execution payload for `block` has been seen (a
-  client MAY queue attestations for processing once the payload is retrieved and
-  SHOULD request the payload envelope via `ExecutionPayloadEnvelopesByRoot`
-  using `aggregate.data.beacon_block_root`).
-
-The following validations are removed:
-
-- _[REJECT]_ `aggregate.data.index == 0`.
+There are no additional Gloas-specific validations for this topic. The
+inherited Electra validations, including `aggregate.data.index == 0`, apply
+unchanged.
 
 ###### `beacon_block`
 
@@ -516,25 +501,9 @@ messages on `data_column_sidecar_{subnet_id}` as defined above.
 
 ###### `beacon_attestation_{subnet_id}`
 
-Let `block` be the beacon block corresponding to
-`attestation.data.beacon_block_root`.
-
-The following validations are added:
-
-- _[REJECT]_ `attestation.data.index < 2`.
-- _[REJECT]_ `attestation.data.index == 0` if
-  `block.slot == attestation.data.slot`.
-- _[REJECT]_ If `attestation.data.index == 1` (payload present for a past
-  block), the execution payload for `block` passes validation.
-- _[IGNORE]_ When `attestation.data.index == 1` (payload present for a past
-  block), the execution payload for `block` has been seen (a client MAY queue
-  attestations for processing once the payload is retrieved and SHOULD request
-  the payload envelope via `ExecutionPayloadEnvelopesByRoot` using
-  `attestation.data.beacon_block_root`).
-
-The following validations are removed:
-
-- _[REJECT]_ `attestation.data.index == 0`.
+There are no additional Gloas-specific validations for this topic. The
+inherited Electra validations, including `attestation.data.index == 0`, apply
+unchanged.
 
 ### The Req/Resp domain
 
