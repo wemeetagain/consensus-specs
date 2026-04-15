@@ -15,7 +15,7 @@
   - [New `can_extend_payload`](#new-can_extend_payload)
   - [New `is_within_ptc_advisory_window`](#new-is_within_ptc_advisory_window)
   - [New `should_extend_payload`](#new-should_extend_payload)
-  - [New `is_ptc_disrespecting_block`](#new-is_ptc_disrespecting_block)
+  - [New `is_ineligible_head_tip`](#new-is_ineligible_head_tip)
   - [New `should_apply_proposer_boost`](#new-should_apply_proposer_boost)
   - [Modified `get_weight`](#modified-get_weight)
   - [Modified `get_head`](#modified-get_head)
@@ -232,14 +232,18 @@ def should_extend_payload(store: Store, root: Root) -> bool:
     )
 ```
 
-### New `is_ptc_disrespecting_block`
+### New `is_ineligible_head_tip`
 
 ```python
-def is_ptc_disrespecting_block(store: Store, root: Root) -> bool:
+def is_ineligible_head_tip(store: Store, blocks: Dict[Root, BeaconBlock], root: Root) -> bool:
     """
-    Return whether ``root`` reorders away from a parent payload that fork choice
-    says should be extended.
+    Return whether ``root`` is a leaf in ``blocks`` and reorders away from a
+    parent payload that fork choice says should be extended.
     """
+    has_children = any(block.parent_root == root for block in blocks.values())
+    if has_children:
+        return False
+
     block = store.blocks[root]
     parent_root = block.parent_root
     parent_bid = store.blocks[parent_root].body.signed_execution_payload_bid.message
@@ -308,10 +312,10 @@ def get_weight(store: Store, root: Root) -> Gwei:
 
 ### Modified `get_head`
 
-*Note*: `get_head` is modified to avoid descending into a child that reorders
-away from a parent payload which fork choice says should be extended. If all
-children of the current head are filtered out in this way, the parent remains
-the head.
+*Note*: `get_head` is modified to avoid descending into a leaf child that
+fork choice marks ineligible as head because it reorders away from a parent
+payload which should be extended. If all children of the current head are
+filtered out in this way, the parent remains the head.
 
 ```python
 def get_head(store: Store) -> Root:
@@ -321,7 +325,9 @@ def get_head(store: Store) -> Root:
     head = store.justified_checkpoint.root
     while True:
         children = [root for root in blocks.keys() if blocks[root].parent_root == head]
-        children = [root for root in children if not is_ptc_disrespecting_block(store, root)]
+        children = [
+            root for root in children if not is_ineligible_head_tip(store, blocks, root)
+        ]
         if len(children) == 0:
             return head
         # Sort by latest attesting balance with ties broken lexicographically
