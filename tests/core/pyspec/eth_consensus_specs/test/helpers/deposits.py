@@ -245,7 +245,7 @@ def prepare_builder_deposit_request(
     signed=False,
 ):
     """
-    Create a deposit request for a builder, depositing the given amount.
+    Create a builder deposit request (EIP-8282), depositing the given amount.
 
     If pubkey is None, finds an unused keypair from builder_pubkeys for a new builder.
     If pubkey is provided, creates a top-up deposit for an existing builder.
@@ -274,12 +274,11 @@ def prepare_builder_deposit_request(
     deposit_data = build_deposit_data(
         spec, pubkey, privkey, amount, withdrawal_credentials, signed=signed
     )
-    return spec.DepositRequest(
+    return spec.BuilderDepositRequest(
         pubkey=deposit_data.pubkey,
         withdrawal_credentials=deposit_data.withdrawal_credentials,
         amount=deposit_data.amount,
         signature=deposit_data.signature,
-        index=spec.uint64(0),
     )
 
 

@@ -40,6 +40,7 @@ def prepare_process_deposit_request(
     validator_index=None,
     builder_index=None,
     pubkey=None,
+    privkey=None,
     withdrawal_credentials=None,
     amount=None,
     signed=False,
@@ -55,9 +56,9 @@ def prepare_process_deposit_request(
 
     The process_deposit_request function behavior varies by fork:
     - Electra/Fulu: Sets deposit_requests_start_index if UNSET, appends PendingDeposit
-    - Gloas+: For builder deposits (0x03 prefix or existing builder pubkey), applies
-      deposit immediately via apply_deposit_for_builder. For validator deposits,
-      appends PendingDeposit (does NOT set deposit_requests_start_index).
+    - Gloas+ (EIP-8282): Drops builder-credentialed (0x03 prefix) deposits; builders
+      are created and topped up only via builder deposit requests. For validator
+      deposits, appends PendingDeposit (does NOT set deposit_requests_start_index).
 
     Args:
         spec: The spec object.
@@ -68,6 +69,8 @@ def prepare_process_deposit_request(
         builder_index: Index for builder pubkey lookup. If set, implies for_builder=True.
             If None with for_builder=True, uses len(state.builders).
         pubkey: Explicit BLSPubkey. Default: derived from validator_index or builder_index.
+        privkey: Explicit private key for signing. Default: looked up from the
+            validator or builder key maps for the effective pubkey.
         withdrawal_credentials: Explicit Bytes32 credentials. Default: BLS prefix (0x00) for
             validators, Builder prefix (0x03) for builders.
         amount: Deposit amount in Gwei. Default: MIN_ACTIVATION_BALANCE.
@@ -98,7 +101,11 @@ def prepare_process_deposit_request(
         # Builder deposit: use builder keys
         index = builder_index if builder_index is not None else len(state.builders)
         effective_pubkey = pubkey if pubkey is not None else builder_pubkeys[index]
-        effective_privkey = builder_pubkey_to_privkey[effective_pubkey]
+        if builder_index is not None and pubkey is None:
+            effective_pubkey = state.builders[builder_index].pubkey
+        effective_privkey = (
+            privkey if privkey is not None else builder_pubkey_to_privkey[effective_pubkey]
+        )
         effective_amount = amount if amount is not None else spec.MIN_ACTIVATION_BALANCE
 
         # Default withdrawal credentials: Builder prefix (0x03)
@@ -114,7 +121,7 @@ def prepare_process_deposit_request(
         # Validator deposit: use validator keys
         index = validator_index if validator_index is not None else len(state.validators)
         effective_pubkey = pubkey if pubkey is not None else pubkeys[index]
-        effective_privkey = privkeys[index]
+        effective_privkey = privkey if privkey is not None else privkeys[index]
         effective_amount = amount if amount is not None else spec.MIN_ACTIVATION_BALANCE
 
         # Default withdrawal credentials: BLS prefix + hash(pubkey)[1:]
@@ -167,19 +174,14 @@ def prepare_process_deposit_request(
     return deposit_request
 
 
-def _is_builder_deposit(spec, pre_state, deposit_request):
-    """Check if request routes to builder path under Gloas+ deposit routing rules."""
+def _is_dropped_builder_deposit(spec, deposit_request):
+    """
+    Check if the deposit request is dropped under Gloas+ (EIP-8282) routing rules:
+    builder-credentialed deposits from the deposit contract are inert.
+    """
     if not is_post_gloas(spec):
         return False
-    builder_pubkeys = {builder.pubkey for builder in pre_state.builders}
-    validator_pubkeys = {v.pubkey for v in pre_state.validators}
-    is_builder = deposit_request.pubkey in builder_pubkeys
-    is_validator = deposit_request.pubkey in validator_pubkeys
-    return is_builder or (
-        spec.is_builder_withdrawal_credential(deposit_request.withdrawal_credentials)
-        and not is_validator
-        and not spec.is_pending_validator(pre_state.pending_deposits, deposit_request.pubkey)
-    )
+    return spec.is_builder_withdrawal_credential(deposit_request.withdrawal_credentials)
 
 
 def assert_process_deposit_request(
@@ -188,19 +190,12 @@ def assert_process_deposit_request(
     pre_state,
     deposit_request=None,
     state_unchanged=False,
-    is_builder_deposit=None,
+    is_dropped=None,
     expected_deposit_requests_start_index=None,
     expected_pending_deposit_pubkey=None,
     expected_pending_deposit_amount=None,
     expected_pending_deposit_slot=None,
     expected_pending_deposit_credentials=None,
-    expected_builder_balance=None,
-    expected_builder_balance_delta=None,
-    expected_builder_count=None,
-    expected_builder_index=None,
-    expected_execution_address=None,
-    expected_builder_withdrawable_epoch=None,
-    slot_reused=None,
 ):
     """
     Assert expected outcomes from process_deposit_request.
@@ -213,22 +208,14 @@ def assert_process_deposit_request(
     - Validator count unchanged (validators created during epoch processing)
     - Balances unchanged (balance applied during epoch processing)
 
-    INVARIANT CHECKS FOR BUILDER DEPOSITS (Gloas+):
-    - pending_deposits unchanged (builder deposits applied immediately)
-    - Builder balance increases by deposit amount
-    - New builder created if pubkey didn't exist
+    INVARIANT CHECKS FOR BUILDER-CREDENTIALED DEPOSITS (Gloas+, EIP-8282):
+    - State unchanged: builder-credentialed deposits from the deposit contract
+      are inert; builders are created and topped up only via builder deposit
+      requests (see assert_process_builder_deposit_request)
 
     TEST-SPECIFIC CHECKS (controlled by parameters):
     - expected_deposit_requests_start_index: Exact value check
     - expected_pending_deposit_*: Check specific fields of the new deposit
-    - expected_builder_balance: Exact builder balance check
-    - expected_builder_balance_delta: Builder balance change check
-    - expected_builder_count: Exact builder count check
-    - expected_builder_index: Verify builder at specific index
-    - expected_execution_address: Verify builder's execution_address
-    - expected_builder_withdrawable_epoch: Expected withdrawable_epoch of new builder
-    - slot_reused: True = count same (slot reused), False = count +1 (new slot).
-      When False, also verifies original builders are unchanged.
 
     Args:
         spec: The spec module for the fork being tested
@@ -236,20 +223,13 @@ def assert_process_deposit_request(
         pre_state: State before deposit request was processed
         deposit_request: The deposit request that was processed (required for invariant checks)
         state_unchanged: If True, asserts state equals pre_state (for rejected requests)
-        is_builder_deposit: If True, use builder deposit assertions. Auto-detected if None.
+        is_dropped: If True, expect a dropped builder-credentialed deposit (state
+            unchanged). Auto-detected from the withdrawal credentials if None.
         expected_deposit_requests_start_index: Expected value of deposit_requests_start_index
         expected_pending_deposit_pubkey: Expected pubkey of new pending deposit
         expected_pending_deposit_amount: Expected amount of new pending deposit
         expected_pending_deposit_slot: Expected slot of new pending deposit
         expected_pending_deposit_credentials: Expected withdrawal_credentials of new pending deposit
-        expected_builder_balance: Expected balance of the builder after deposit
-        expected_builder_balance_delta: Expected change in builder balance
-        expected_builder_count: Expected exact count of builders after deposit
-        expected_builder_index: Expected index of the builder (for verifying slot reuse)
-        expected_execution_address: Expected execution_address of the new builder
-        expected_builder_withdrawable_epoch: Expected withdrawable_epoch of the builder
-        slot_reused: If True, assert builder count unchanged; if False, assert +1
-            and verify all original builders are unchanged
     """
     if state_unchanged:
         assert state == pre_state, "Expected state to be unchanged after rejected deposit request"
@@ -258,163 +238,18 @@ def assert_process_deposit_request(
     # Invariant checks require deposit_request
     assert deposit_request is not None, "deposit_request required when state_unchanged=False"
 
-    # Auto-detect builder deposit if not specified
-    if is_builder_deposit is None:
-        is_builder_deposit = _is_builder_deposit(spec, pre_state, deposit_request)
+    # Auto-detect dropped builder-credentialed deposit if not specified
+    if is_dropped is None:
+        is_dropped = _is_dropped_builder_deposit(spec, deposit_request)
 
-    if is_builder_deposit and is_post_gloas(spec):
-        # BUILDER DEPOSIT ASSERTIONS (Gloas+)
-        # Builder deposits are applied immediately, not queued
-
-        # INVARIANT: pending_deposits unchanged for builder deposits
-        assert len(state.pending_deposits) == len(pre_state.pending_deposits), (
-            f"pending_deposits should not change for builder deposits: "
-            f"pre={len(pre_state.pending_deposits)}, post={len(state.pending_deposits)}"
+    if is_dropped:
+        # DROPPED BUILDER-CREDENTIALED DEPOSIT (Gloas+, EIP-8282)
+        assert state == pre_state, (
+            "Expected state to be unchanged after a builder-credentialed deposit request"
         )
-
-        # Find the builder by pubkey
-        builder_index = None
-        for i, builder in enumerate(state.builders):
-            if builder.pubkey == deposit_request.pubkey:
-                builder_index = i
-                break
-
-        assert builder_index is not None, (
-            f"Builder with pubkey {deposit_request.pubkey[:8]}... should exist after deposit"
-        )
-
-        # Check if this was a new builder or top-up
-        pre_builder_index = None
-        for i, builder in enumerate(pre_state.builders):
-            if builder.pubkey == deposit_request.pubkey:
-                pre_builder_index = i
-                break
-
-        if pre_builder_index is None:
-            # New builder was created (could be appended or reused slot)
-            # The count either increases by 1 (append) or stays the same (slot reuse)
-            # If slot_reused is specified, that takes precedence for the check
-            if slot_reused is None:
-                # Allow either case (append or reuse) if not explicitly specified
-                assert len(state.builders) >= len(pre_state.builders), (
-                    "Builder count should not decrease for new builder deposit"
-                )
-        else:
-            # Top-up of existing builder
-            assert len(state.builders) == len(pre_state.builders), (
-                "Builder count should not change for top-up deposit"
-            )
-            # Balance should increase
-            pre_balance = pre_state.builders[pre_builder_index].balance
-            post_balance = state.builders[builder_index].balance
-            assert post_balance == pre_balance + deposit_request.amount, (
-                f"Builder balance should increase by deposit amount: "
-                f"pre={pre_balance}, post={post_balance}, amount={deposit_request.amount}"
-            )
-            # All other builders should remain unchanged
-            for i in range(len(pre_state.builders)):
-                if i != pre_builder_index:
-                    assert state.builders[i] == pre_state.builders[i], (
-                        f"Builder at index {i} should be unchanged during top-up"
-                    )
-
-        # INVARIANT: Validator count unchanged
-        assert len(state.validators) == len(pre_state.validators), (
-            "Validator count should not change during builder deposit processing"
-        )
-
-        # INVARIANT: Validator balances unchanged
-        assert list(state.balances) == list(pre_state.balances), (
-            "Validator balances should not change during builder deposit processing"
-        )
-
-        # Test-specific checks for builders
-        if expected_builder_balance is not None:
-            assert state.builders[builder_index].balance == expected_builder_balance
-
-        if expected_builder_balance_delta is not None:
-            if pre_builder_index is not None:
-                pre_balance = pre_state.builders[pre_builder_index].balance
-            else:
-                pre_balance = 0
-            assert (
-                state.builders[builder_index].balance
-                == pre_balance + expected_builder_balance_delta
-            )
-
-        if expected_builder_count is not None:
-            assert len(state.builders) == expected_builder_count, (
-                f"expected_builder_count: expected={expected_builder_count}, "
-                f"got={len(state.builders)}"
-            )
-
-        if expected_builder_index is not None:
-            assert builder_index == expected_builder_index, (
-                f"expected_builder_index: expected={expected_builder_index}, got={builder_index}"
-            )
-
-        if expected_execution_address is not None:
-            assert state.builders[builder_index].execution_address == expected_execution_address, (
-                f"expected_execution_address: expected={expected_execution_address}, "
-                f"got={state.builders[builder_index].execution_address}"
-            )
-
-        if expected_builder_withdrawable_epoch is not None:
-            assert (
-                state.builders[builder_index].withdrawable_epoch
-                == expected_builder_withdrawable_epoch
-            ), (
-                f"expected_builder_withdrawable_epoch: expected={expected_builder_withdrawable_epoch}, "
-                f"got={state.builders[builder_index].withdrawable_epoch}"
-            )
-
-        if slot_reused is True:
-            assert len(state.builders) == len(pre_state.builders), (
-                f"slot_reused=True: builder count should be unchanged: "
-                f"pre={len(pre_state.builders)}, post={len(state.builders)}"
-            )
-            # Verify exactly one original builder was replaced and it met reuse criteria
-            changed_indices = [
-                i
-                for i in range(len(pre_state.builders))
-                if state.builders[i] != pre_state.builders[i]
-            ]
-            assert len(changed_indices) == 1, (
-                f"slot_reused=True: exactly one builder should change: "
-                f"changed_indices={changed_indices}"
-            )
-            reused_idx = changed_indices[0]
-            pre_builder = pre_state.builders[reused_idx]
-            current_epoch = spec.get_current_epoch(pre_state)
-            assert pre_builder.withdrawable_epoch <= current_epoch, (
-                f"slot_reused=True: reused builder at index {reused_idx} must have "
-                f"withdrawable_epoch <= current_epoch: "
-                f"withdrawable_epoch={pre_builder.withdrawable_epoch}, current_epoch={current_epoch}"
-            )
-            assert pre_builder.balance == 0, (
-                f"slot_reused=True: reused builder at index {reused_idx} must have "
-                f"zero balance: balance={pre_builder.balance}"
-            )
-        elif slot_reused is False:
-            assert len(state.builders) == len(pre_state.builders) + 1, (
-                f"slot_reused=False: builder count should increase by 1: "
-                f"pre={len(pre_state.builders)}, post={len(state.builders)}"
-            )
-            # Verify original builders are unchanged when new builder is appended
-            for i in range(len(pre_state.builders)):
-                assert state.builders[i] == pre_state.builders[i], (
-                    f"slot_reused=False: original builder at index {i} should be unchanged"
-                )
 
     else:
         # VALIDATOR DEPOSIT ASSERTIONS
-
-        # Guard: expected_builder_count is meaningless for validator deposits
-        # (builder count is an invariant that should never change).
-        assert expected_builder_count is None, (
-            "expected_builder_count must not be used with validator deposits: "
-            "builder count is invariant for validator deposits"
-        )
 
         # INVARIANT: pending_deposits increases by exactly 1
         assert len(state.pending_deposits) == len(pre_state.pending_deposits) + 1, (
@@ -504,3 +339,242 @@ def assert_process_deposit_request(
             f"deposit_requests_start_index: expected={expected_deposit_requests_start_index}, "
             f"got={state.deposit_requests_start_index}"
         )
+
+
+def run_builder_deposit_request_processing(spec, state, builder_deposit_request):
+    """
+    Run process_builder_deposit_request, yielding pre/post states for test vectors.
+
+    Builder deposit requests never raise: a request that fails validation is
+    consumed and ignored, so the post state is always yielded.
+    """
+    yield "pre", state
+    yield "builder_deposit_request", builder_deposit_request
+
+    spec.process_builder_deposit_request(state, builder_deposit_request)
+    yield "post", state
+
+
+def prepare_process_builder_deposit_request(spec, state, **kwargs):
+    """
+    Prepare a BuilderDepositRequest with configurable parameters.
+
+    Accepts the same arguments as prepare_process_deposit_request (with
+    for_builder defaulting to True), but returns a BuilderDepositRequest,
+    which carries no index field.
+    """
+    kwargs.setdefault("for_builder", True)
+    deposit_request = prepare_process_deposit_request(spec, state, **kwargs)
+    return spec.BuilderDepositRequest(
+        pubkey=deposit_request.pubkey,
+        withdrawal_credentials=deposit_request.withdrawal_credentials,
+        amount=deposit_request.amount,
+        signature=deposit_request.signature,
+    )
+
+
+def assert_process_builder_deposit_request(
+    spec,
+    state,
+    pre_state,
+    builder_deposit_request=None,
+    state_unchanged=False,
+    expected_builder_balance=None,
+    expected_builder_balance_delta=None,
+    expected_builder_count=None,
+    expected_builder_index=None,
+    expected_execution_address=None,
+    expected_builder_withdrawable_epoch=None,
+    slot_reused=None,
+):
+    """
+    Assert expected outcomes from process_builder_deposit_request.
+
+    INVARIANT CHECKS (always run unless state_unchanged):
+    - pending_deposits unchanged (builder deposits applied immediately)
+    - Builder balance increases by deposit amount
+    - New builder created if pubkey didn't exist
+    - Validator count and balances unchanged
+
+    TEST-SPECIFIC CHECKS (controlled by parameters):
+    - expected_builder_balance: Exact builder balance check
+    - expected_builder_balance_delta: Builder balance change check
+    - expected_builder_count: Exact builder count check
+    - expected_builder_index: Verify builder at specific index
+    - expected_execution_address: Verify builder's execution_address
+    - expected_builder_withdrawable_epoch: Expected withdrawable_epoch of new builder
+    - slot_reused: True = count same (slot reused), False = count +1 (new slot).
+      When False, also verifies original builders are unchanged.
+
+    Args:
+        spec: The spec module for the fork being tested
+        state: State after the request was processed
+        pre_state: State before the request was processed
+        builder_deposit_request: The request that was processed
+        state_unchanged: If True, asserts state equals pre_state (for ignored requests)
+        expected_builder_balance: Expected balance of the builder after deposit
+        expected_builder_balance_delta: Expected change in builder balance
+        expected_builder_count: Expected exact count of builders after deposit
+        expected_builder_index: Expected index of the builder (for verifying slot reuse)
+        expected_execution_address: Expected execution_address of the new builder
+        expected_builder_withdrawable_epoch: Expected withdrawable_epoch of the builder
+        slot_reused: If True, assert builder count unchanged; if False, assert +1
+            and verify all original builders are unchanged
+    """
+    if state_unchanged:
+        assert state == pre_state, (
+            "Expected state to be unchanged after ignored builder deposit request"
+        )
+        return
+
+    assert builder_deposit_request is not None, (
+        "builder_deposit_request required when state_unchanged=False"
+    )
+
+    # INVARIANT: pending_deposits unchanged for builder deposits
+    assert len(state.pending_deposits) == len(pre_state.pending_deposits), (
+        f"pending_deposits should not change for builder deposits: "
+        f"pre={len(pre_state.pending_deposits)}, post={len(state.pending_deposits)}"
+    )
+
+    # Find the builder by pubkey
+    builder_index = None
+    for i, builder in enumerate(state.builders):
+        if builder.pubkey == builder_deposit_request.pubkey:
+            builder_index = i
+            break
+
+    assert builder_index is not None, (
+        f"Builder with pubkey {builder_deposit_request.pubkey[:8]}... should exist after deposit"
+    )
+
+    # Check if this was a new builder or top-up
+    pre_builder_index = None
+    for i, builder in enumerate(pre_state.builders):
+        if builder.pubkey == builder_deposit_request.pubkey:
+            pre_builder_index = i
+            break
+
+    if pre_builder_index is None:
+        # New builder was created (could be appended or reused slot)
+        # The count either increases by 1 (append) or stays the same (slot reuse)
+        # If slot_reused is specified, that takes precedence for the check
+        if slot_reused is None:
+            # Allow either case (append or reuse) if not explicitly specified
+            assert len(state.builders) >= len(pre_state.builders), (
+                "Builder count should not decrease for new builder deposit"
+            )
+    else:
+        # Top-up of existing builder
+        assert len(state.builders) == len(pre_state.builders), (
+            "Builder count should not change for top-up deposit"
+        )
+        # Balance should increase
+        pre_balance = pre_state.builders[pre_builder_index].balance
+        post_balance = state.builders[builder_index].balance
+        assert post_balance == pre_balance + builder_deposit_request.amount, (
+            f"Builder balance should increase by deposit amount: "
+            f"pre={pre_balance}, post={post_balance}, amount={builder_deposit_request.amount}"
+        )
+        # All other builders should remain unchanged
+        for i in range(len(pre_state.builders)):
+            if i != pre_builder_index:
+                assert state.builders[i] == pre_state.builders[i], (
+                    f"Builder at index {i} should be unchanged during top-up"
+                )
+
+    # INVARIANT: Validator count unchanged
+    assert len(state.validators) == len(pre_state.validators), (
+        "Validator count should not change during builder deposit processing"
+    )
+
+    # INVARIANT: Validator balances unchanged
+    assert list(state.balances) == list(pre_state.balances), (
+        "Validator balances should not change during builder deposit processing"
+    )
+
+    # Test-specific checks for builders
+    if expected_builder_balance is not None:
+        assert state.builders[builder_index].balance == expected_builder_balance
+
+    if expected_builder_balance_delta is not None:
+        if pre_builder_index is not None:
+            pre_balance = pre_state.builders[pre_builder_index].balance
+        else:
+            pre_balance = 0
+        assert state.builders[builder_index].balance == pre_balance + expected_builder_balance_delta
+
+    if expected_builder_count is not None:
+        assert len(state.builders) == expected_builder_count, (
+            f"expected_builder_count: expected={expected_builder_count}, got={len(state.builders)}"
+        )
+
+    if expected_builder_index is not None:
+        assert builder_index == expected_builder_index, (
+            f"expected_builder_index: expected={expected_builder_index}, got={builder_index}"
+        )
+
+    if expected_execution_address is not None:
+        assert state.builders[builder_index].execution_address == expected_execution_address, (
+            f"expected_execution_address: expected={expected_execution_address}, "
+            f"got={state.builders[builder_index].execution_address}"
+        )
+
+    if expected_builder_withdrawable_epoch is not None:
+        assert (
+            state.builders[builder_index].withdrawable_epoch == expected_builder_withdrawable_epoch
+        ), (
+            f"expected_builder_withdrawable_epoch: "
+            f"expected={expected_builder_withdrawable_epoch}, "
+            f"got={state.builders[builder_index].withdrawable_epoch}"
+        )
+
+    if slot_reused is True:
+        assert len(state.builders) == len(pre_state.builders), (
+            f"slot_reused=True: builder count should be unchanged: "
+            f"pre={len(pre_state.builders)}, post={len(state.builders)}"
+        )
+        # Verify exactly one original builder was replaced and it met reuse criteria
+        changed_indices = [
+            i for i in range(len(pre_state.builders)) if state.builders[i] != pre_state.builders[i]
+        ]
+        assert len(changed_indices) == 1, (
+            f"slot_reused=True: exactly one builder should change: "
+            f"changed_indices={changed_indices}"
+        )
+        reused_idx = changed_indices[0]
+        pre_builder = pre_state.builders[reused_idx]
+        current_epoch = spec.get_current_epoch(pre_state)
+        assert pre_builder.withdrawable_epoch <= current_epoch, (
+            f"slot_reused=True: reused builder at index {reused_idx} must have "
+            f"withdrawable_epoch <= current_epoch: "
+            f"withdrawable_epoch={pre_builder.withdrawable_epoch}, current_epoch={current_epoch}"
+        )
+        assert pre_builder.balance == 0, (
+            f"slot_reused=True: reused builder at index {reused_idx} must have "
+            f"zero balance: balance={pre_builder.balance}"
+        )
+    elif slot_reused is False:
+        assert len(state.builders) == len(pre_state.builders) + 1, (
+            f"slot_reused=False: builder count should increase by 1: "
+            f"pre={len(pre_state.builders)}, post={len(state.builders)}"
+        )
+        # Verify original builders are unchanged when new builder is appended
+        for i in range(len(pre_state.builders)):
+            assert state.builders[i] == pre_state.builders[i], (
+                f"slot_reused=False: original builder at index {i} should be unchanged"
+            )
+
+
+def run_builder_exit_request_processing(spec, state, builder_exit_request):
+    """
+    Run process_builder_exit_request, yielding pre/post states for test vectors.
+
+    Builder exit requests never raise: a request that fails any precondition is
+    consumed and discarded, so the post state is always yielded.
+    """
+    yield "pre", state
+    yield "builder_exit_request", builder_exit_request
+
+    spec.process_builder_exit_request(state, builder_exit_request)
+    yield "post", state

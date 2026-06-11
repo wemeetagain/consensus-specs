@@ -11,6 +11,7 @@
   - [Process deposit](#process-deposit)
   - [Builder index](#builder-index)
   - [Activation](#activation)
+- [Exiting](#exiting)
 - [Builder activities](#builder-activities)
   - [Constructing the `SignedExecutionPayloadBid`](#constructing-the-signedexecutionpayloadbid)
   - [Constructing the `DataColumnSidecar`s](#constructing-the-datacolumnsidecars)
@@ -37,10 +38,9 @@ builders.
 
 ### Builder withdrawal credentials
 
-When submitting a deposit to the deposit contract, the `withdrawal_credentials`
-field determines whether the staked actor will be a validator or a builder. To
-be recognized as a builder, the `withdrawal_credentials` must use the
-`BUILDER_WITHDRAWAL_PREFIX`.
+The `withdrawal_credentials` committed in a builder deposit request determines
+the builder's execution address. To be recognized as a builder, the
+`withdrawal_credentials` must use the `BUILDER_WITHDRAWAL_PREFIX`.
 
 The `withdrawal_credentials` field must be:
 
@@ -49,23 +49,34 @@ The `withdrawal_credentials` field must be:
 - `withdrawal_credentials[12:] == builder_execution_address`
 
 Where `builder_execution_address` is an execution-layer address that will
-receive withdrawals.
+receive withdrawals and is the sole authorizer of the builder's exit.
 
 ### Submit deposit
 
-Builders follow the same deposit process as validators, but with the
-builder-specific withdrawal credentials. The deposit must include:
+Builders are created and topped up via the
+[EIP-8282](https://eips.ethereum.org/EIPS/eip-8282) builder deposit contract on
+the execution layer — *not* via the validator deposit contract, which drops
+builder-credentialed deposits (see `process_deposit_request`). The builder
+deposit request must include:
 
 - `pubkey`: The builder's BLS public key.
 - `withdrawal_credentials`: With the `BUILDER_WITHDRAWAL_PREFIX` (`0x03`)
   prefix.
-- `amount`: At least `MIN_DEPOSIT_AMOUNT` gwei.
-- `signature`: BLS signature over the deposit data.
+- `amount`: At least 1 ETH of gwei (enforced by the deposit contract).
+- `signature`: BLS signature over the deposit data (the same `DepositMessage`
+  proof-of-possession validator deposits use).
+
+The staked `amount` must be attached to the contract call on top of the
+contract's request fee.
 
 ### Process deposit
 
-The beacon chain processes builder deposits identically to validator deposits,
-with the withdrawal credentials using `BUILDER_WITHDRAWAL_PREFIX`.
+The beacon chain processes builder deposit requests immediately via
+`process_builder_deposit_request` — they are not routed through
+`pending_deposits`. A request for a new `pubkey` registers the builder after
+verifying the `BUILDER_WITHDRAWAL_PREFIX` credential and the
+proof-of-possession; a request for an already-registered `pubkey` is a stake
+top-up whose `withdrawal_credentials` and `signature` are ignored.
 
 ### Builder index
 
@@ -76,15 +87,30 @@ identify the builder in execution payload bids and envelopes.
 ### Activation
 
 Builders become active once the epoch in which they were registered (assigned an
-index) has been finalized. Since registrations occur as soon as deposits reach
-the beacon chain, builders typically become active two epochs after submitting
-their deposit.
+index) has been finalized. Since registrations occur as soon as deposit requests
+reach the beacon chain, builders typically become active two epochs after
+submitting their deposit.
 
 *Note*: At the fork, pending deposits with the `BUILDER_WITHDRAWAL_PREFIX` are
 applied to the builder registry. The builder's `deposit_epoch` is set to the
 epoch of the pending deposit, not the fork epoch. Therefore, if that epoch is
 finalized at the fork, the builder will be immediately active. See
 `onboard_builders_from_pending_deposits` for details.
+
+## Exiting
+
+Builders exit via the [EIP-8282](https://eips.ethereum.org/EIPS/eip-8282)
+builder exit contract on the execution layer: a call from the builder's
+`builder_execution_address` carrying the builder's `pubkey`. The beacon chain
+initiates the exit via `process_builder_exit_request` only if the builder is
+active, the request's `source_address` equals the builder's execution address,
+and the builder has no pending withdrawals in the queue; a request that fails
+any of these preconditions is discarded and must be resubmitted. Builders cannot
+exit through the voluntary-exit operation, which is validator-only.
+
+Once exited, the builder's `withdrawable_epoch` is set
+`MIN_BUILDER_WITHDRAWABILITY_DELAY` epochs in the future, after which its full
+balance is swept to its execution address.
 
 ## Builder activities
 

@@ -10,6 +10,7 @@ from eth_consensus_specs.test.helpers.constants import ELECTRA, GLOAS
 from eth_consensus_specs.test.helpers.keys import builder_pubkeys, pubkeys
 from eth_consensus_specs.utils import bls
 from tests.infra.helpers.deposit_requests import (
+    assert_process_builder_deposit_request,
     assert_process_deposit_request,
     prepare_process_deposit_request,
 )
@@ -255,17 +256,41 @@ def test_prepare_process_deposit_request_builder_custom_amount(spec, state):
     assert deposit_request.amount == custom_amount
 
 
-def test_assert_new_builder_deposit():
-    """Test assert_process_deposit_request passes for a new builder deposit."""
+def test_assert_dropped_builder_credentialed_deposit():
+    """Test assert_process_deposit_request passes for a dropped builder-credentialed deposit."""
     spec = MagicMock()
 
-    builder_pubkey = b"\x03" * 48
     deposit_request = MagicMock()
-    deposit_request.pubkey = builder_pubkey
+    deposit_request.pubkey = b"\x03" * 48
     deposit_request.withdrawal_credentials = b"\x03" + b"\x00" * 11 + b"\x59" * 20
     deposit_request.amount = 32_000_000_000
     deposit_request.signature = b"\x02" * 96
     deposit_request.index = 0
+
+    # Builder-credentialed deposits are inert in Gloas+ (EIP-8282): the state
+    # is unchanged, so the same object serves as both pre and post state.
+    state = MagicMock()
+
+    with patch("tests.infra.helpers.deposit_requests.is_post_gloas", return_value=True):
+        assert_process_deposit_request(
+            spec,
+            state,
+            state,
+            deposit_request=deposit_request,
+            is_dropped=True,
+        )
+
+
+def test_assert_new_builder_deposit_request():
+    """Test assert_process_builder_deposit_request passes for a new builder deposit."""
+    spec = MagicMock()
+
+    builder_pubkey = b"\x03" * 48
+    builder_deposit_request = MagicMock()
+    builder_deposit_request.pubkey = builder_pubkey
+    builder_deposit_request.withdrawal_credentials = b"\x03" + b"\x00" * 11 + b"\x59" * 20
+    builder_deposit_request.amount = 32_000_000_000
+    builder_deposit_request.signature = b"\x02" * 96
 
     # Pre state: no builders
     pre_state = MagicMock()
@@ -277,7 +302,7 @@ def test_assert_new_builder_deposit():
     # Post state: one new builder with matching pubkey
     new_builder = MagicMock()
     new_builder.pubkey = builder_pubkey
-    new_builder.balance = deposit_request.amount
+    new_builder.balance = builder_deposit_request.amount
 
     state = MagicMock()
     state.pending_deposits = []
@@ -285,14 +310,13 @@ def test_assert_new_builder_deposit():
     state.balances = [32_000_000_000]
     state.builders = [new_builder]
 
-    with patch("tests.infra.helpers.deposit_requests.is_post_gloas", return_value=True):
-        assert_process_deposit_request(
-            spec,
-            state,
-            pre_state,
-            deposit_request=deposit_request,
-            is_builder_deposit=True,
-        )
+    assert_process_builder_deposit_request(
+        spec,
+        state,
+        pre_state,
+        builder_deposit_request=builder_deposit_request,
+        expected_builder_balance=builder_deposit_request.amount,
+    )
 
 
 @with_all_phases_from_to(ELECTRA, GLOAS)
