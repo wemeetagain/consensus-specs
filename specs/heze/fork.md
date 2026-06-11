@@ -104,6 +104,7 @@ def upgrade_to_heze(pre: gloas.BeaconState) -> BeaconState:
         # [Modified in Heze:EIP7805]
         latest_execution_payload_bid=latest_execution_payload_bid,
         payload_expected_withdrawals=pre.payload_expected_withdrawals,
+        payload_expected_builder_withdrawals=pre.payload_expected_builder_withdrawals,
         ptc_window=pre.ptc_window,
     )
 

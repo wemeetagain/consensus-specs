@@ -132,6 +132,8 @@ class PayloadAttributes:
     slot_number: uint64
     # [New in Gloas]
     target_gas_limit: uint64
+    # [New in Gloas:EIP7732]
+    builder_withdrawals: Sequence[BuilderWithdrawal]
 ```
 
 ### Modified `LatestMessage`
@@ -654,6 +656,10 @@ def verify_execution_payload_envelope(
     assert payload.parent_hash == state.latest_block_hash
     assert payload.timestamp == compute_time_at_slot(state, state.slot)
     assert hash_tree_root(payload.withdrawals) == hash_tree_root(state.payload_expected_withdrawals)
+    # [New in Gloas:EIP7732]
+    assert hash_tree_root(payload.builder_withdrawals) == hash_tree_root(
+        state.payload_expected_builder_withdrawals
+    )
     assert execution_engine.verify_and_notify_new_payload(
         NewPayloadRequest(
             execution_payload=payload,

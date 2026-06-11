@@ -275,10 +275,13 @@ def prepare_execution_payload(
         state = copy(state)
         # Apply parent payload before computing withdrawals
         apply_parent_execution_payload(state, envelope.execution_requests)
-        withdrawals = get_expected_withdrawals(state).withdrawals
+        expected = get_expected_withdrawals(state)
+        withdrawals = expected.withdrawals
+        builder_withdrawals = expected.builder_withdrawals
         head_block_hash = parent_bid.block_hash
     else:
         withdrawals = state.payload_expected_withdrawals
+        builder_withdrawals = state.payload_expected_builder_withdrawals
         head_block_hash = parent_bid.parent_block_hash
 
     # Set the forkchoice head and initiate the payload build process
@@ -293,6 +296,8 @@ def prepare_execution_payload(
         slot_number=state.slot,
         # [New in Gloas]
         target_gas_limit=target_gas_limit,
+        # [New in Gloas:EIP7732]
+        builder_withdrawals=builder_withdrawals,
     )
     return execution_engine.notify_forkchoice_updated(
         # [Modified in Gloas:EIP7732]

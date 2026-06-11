@@ -43,6 +43,7 @@ def _build_invalid_envelope(spec, state, block_root, signed_block, **overrides):
         "slot_number",
         "timestamp",
         "withdrawals",
+        "builder_withdrawals",
     ):
         if key in overrides:
             setattr(payload, key, overrides.pop(key))
@@ -294,6 +295,34 @@ def test_on_execution_payload_envelope_wrong_withdrawals(spec, state):
         withdrawals=spec.List[spec.Withdrawal, spec.MAX_WITHDRAWALS_PER_PAYLOAD](
             [wrong_withdrawal]
         ),
+    )
+    yield from add_execution_payload(spec, store, envelope, test_steps, valid=False)
+
+    assert block_root not in store.payloads
+
+    yield "steps", test_steps
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_on_execution_payload_envelope_wrong_builder_withdrawals(spec, state):
+    """
+    Test that an envelope with builder withdrawals not matching
+    state.payload_expected_builder_withdrawals is rejected.
+    """
+    store, block_root, _, signed_block, test_steps = yield from setup_one_block_store(spec, state)
+
+    wrong_builder_withdrawal = spec.BuilderWithdrawal(
+        index=0, builder_index=0, address=b"\x22" * 20, amount=spec.Gwei(1)
+    )
+    envelope = _build_invalid_envelope(
+        spec,
+        state,
+        block_root,
+        signed_block,
+        builder_withdrawals=spec.List[
+            spec.BuilderWithdrawal, spec.MAX_BUILDER_WITHDRAWALS_PER_PAYLOAD
+        ]([wrong_builder_withdrawal]),
     )
     yield from add_execution_payload(spec, store, envelope, test_steps, valid=False)
 

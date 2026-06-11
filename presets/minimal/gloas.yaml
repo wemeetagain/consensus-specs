@@ -28,3 +28,5 @@ BUILDER_PENDING_WITHDRAWALS_LIMIT: 1048576
 # ---------------------------------------------------------------
 # [customized] 2**4 (= 16) builders
 MAX_BUILDERS_PER_WITHDRAWALS_SWEEP: 16
+# 2**3 (= 8) builder withdrawals
+MAX_BUILDER_WITHDRAWALS_PER_PAYLOAD: 8

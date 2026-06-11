@@ -220,6 +220,9 @@ def create_genesis_state(spec, validator_balances, activation_threshold):
         state.payload_expected_withdrawals = spec.List[
             spec.Withdrawal, spec.MAX_WITHDRAWALS_PER_PAYLOAD
         ]()
+        state.payload_expected_builder_withdrawals = spec.List[
+            spec.BuilderWithdrawal, spec.MAX_BUILDER_WITHDRAWALS_PER_PAYLOAD
+        ]()
         state.builder_pending_payments = [
             spec.BuilderPendingPayment() for _ in range(2 * spec.SLOTS_PER_EPOCH)
         ]

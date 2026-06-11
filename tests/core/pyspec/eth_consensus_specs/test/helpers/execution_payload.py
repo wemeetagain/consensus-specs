@@ -373,6 +373,7 @@ def build_empty_execution_payload(spec, state, randao_mix=None):
     if is_post_gloas(spec):
         payload.block_access_list = spec.ByteList[spec.MAX_BYTES_PER_TRANSACTION]()
         payload.slot_number = state.slot
+        payload.builder_withdrawals = state.payload_expected_builder_withdrawals
 
     payload.block_hash = compute_el_block_hash(spec, payload, state)
 

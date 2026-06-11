@@ -47,16 +47,17 @@ ______________________________________________________________________
 
 ## Output Space (State Fields Modified)
 
-| Field                                   | Type                                                                | Value Space                                                                                                                             | Modification                                  |
-| --------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `state.payload_expected_withdrawals`    | `List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD]`                     | Length in \[0, `MAX_WITHDRAWALS_PER_PAYLOAD`\]. **Derived from** input `next_withdrawal_index` (sequential), pending lists, and sweeps. | **Set** to computed withdrawals list          |
-| `state.balances[*]`                     | `Gwei`                                                              | `uint64`. **Decreased by** withdrawal amounts for each validator withdrawal.                                                            | **Decreased** by validator withdrawal amounts |
-| `state.builders[*].balance`             | `Gwei`                                                              | `uint64`. **Decreased by** withdrawal amounts for each builder withdrawal. New value = old - min(withdrawal.amount, balance).           | **Decreased** by builder withdrawal amounts   |
-| `state.builder_pending_withdrawals`     | `List[BuilderPendingWithdrawal, BUILDER_PENDING_WITHDRAWALS_LIMIT]` | New length = old length - `processed_builder_withdrawals_count`. **Sliced** to remove processed items.                                  | **Sliced** - removes first N processed items  |
-| `state.pending_partial_withdrawals`     | `List[PendingPartialWithdrawal, PENDING_PARTIAL_WITHDRAWALS_LIMIT]` | New length = old length - `processed_partial_withdrawals_count`.                                                                        | **Sliced** - removes first N processed items  |
-| `state.next_withdrawal_index`           | `WithdrawalIndex`                                                   | New value = `payload_expected_withdrawals[-1].index + 1` if any withdrawals, else unchanged.                                            | **Incremented** by number of withdrawals      |
-| `state.next_withdrawal_builder_index`   | `BuilderIndex`                                                      | **Bound to** `len(builders)` (wraps via modulo). Updated based on builder sweep progress.                                               | **Updated** based on builder sweep progress   |
-| `state.next_withdrawal_validator_index` | `ValidatorIndex`                                                    | **Bound to** `len(validators)` (wraps via modulo). Updated based on validator sweep progress.                                           | **Updated** based on validator sweep progress |
+| Field                                        | Type                                                                | Value Space                                                                                                                             | Modification                                   |
+| -------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `state.payload_expected_withdrawals`         | `List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD]`                     | Length in \[0, `MAX_WITHDRAWALS_PER_PAYLOAD`\]. **Derived from** input `next_withdrawal_index` (sequential), pending lists, and sweeps. | **Set** to computed validator withdrawals list |
+| `state.payload_expected_builder_withdrawals` | `List[BuilderWithdrawal, MAX_BUILDER_WITHDRAWALS_PER_PAYLOAD]`      | Length in \[0, `MAX_BUILDER_WITHDRAWALS_PER_PAYLOAD`\]. **Derived from** builder pending withdrawals and the builders sweep.            | **Set** to computed builder withdrawals list   |
+| `state.balances[*]`                          | `Gwei`                                                              | `uint64`. **Decreased by** withdrawal amounts for each validator withdrawal.                                                            | **Decreased** by validator withdrawal amounts  |
+| `state.builders[*].balance`                  | `Gwei`                                                              | `uint64`. **Decreased by** withdrawal amounts for each builder withdrawal. New value = old - min(withdrawal.amount, balance).           | **Decreased** by builder withdrawal amounts    |
+| `state.builder_pending_withdrawals`          | `List[BuilderPendingWithdrawal, BUILDER_PENDING_WITHDRAWALS_LIMIT]` | New length = old length - `processed_builder_withdrawals_count`. **Sliced** to remove processed items.                                  | **Sliced** - removes first N processed items   |
+| `state.pending_partial_withdrawals`          | `List[PendingPartialWithdrawal, PENDING_PARTIAL_WITHDRAWALS_LIMIT]` | New length = old length - `processed_partial_withdrawals_count`.                                                                        | **Sliced** - removes first N processed items   |
+| `state.next_withdrawal_index`                | `WithdrawalIndex`                                                   | New value = old + total withdrawals across both lists (builder withdrawals are assigned the lower indices), else unchanged.             | **Incremented** by number of withdrawals       |
+| `state.next_withdrawal_builder_index`        | `BuilderIndex`                                                      | **Bound to** `len(builders)` (wraps via modulo). Updated based on builder sweep progress.                                               | **Updated** based on builder sweep progress    |
+| `state.next_withdrawal_validator_index`      | `ValidatorIndex`                                                    | **Bound to** `len(validators)` (wraps via modulo). Updated based on validator sweep progress.                                           | **Updated** based on validator sweep progress  |
 
 ______________________________________________________________________
 
@@ -143,11 +144,9 @@ Builders are **separate non-validating staked actors** stored in
   `state.validators`
 - Builder balances are in `Builder.balance`, not `state.balances[]`
 - Builders cannot be slashed
-- Builders use `BuilderIndex` type, which is converted to/from `ValidatorIndex`
-  using `convert_builder_index_to_validator_index()` and
-  `convert_validator_index_to_builder_index()`
-- In `Withdrawal` output, builder withdrawals use a converted validator index
-  (with `BUILDER_INDEX_FLAG` bit set)
+- Builders use the `BuilderIndex` type; builder withdrawals are carried in their
+  own `BuilderWithdrawal` list (`payload_expected_builder_withdrawals`), so
+  builder indices never appear in `Withdrawal.validator_index`
 
 **Builder withdrawal types**:
 
@@ -169,18 +168,17 @@ inherited functions are from earlier forks (capella, electra, phase0).
   - `is_parent_block_full(state)` — gloas
   - `get_expected_withdrawals(state)` — gloas
     - `get_builder_withdrawals(state, ...)` — gloas
-      - `convert_builder_index_to_validator_index(index)` — gloas
-    - `get_pending_partial_withdrawals(state, ...)` — electra
     - `get_builders_sweep_withdrawals(state, ...)` — gloas
       - `get_current_epoch(state)` — phase0
-      - `convert_builder_index_to_validator_index(index)` — gloas
+    - `get_pending_partial_withdrawals(state, ...)` — electra
     - `get_validators_sweep_withdrawals(state, ...)` — electra
-  - `apply_withdrawals(state, withdrawals)` — gloas
-    - `is_builder_index(validator_index)` — gloas
-    - `convert_validator_index_to_builder_index(index)` — gloas
+  - `apply_withdrawals(state, withdrawals)` — capella
     - `decrease_balance(state, index, amount)` — phase0
-  - `update_next_withdrawal_index(state, withdrawals)` — capella
+  - `apply_builder_withdrawals(state, builder_withdrawals)` — gloas
+  - `update_next_withdrawal_index(state, expected)` — gloas
   - `update_payload_expected_withdrawals(state, withdrawals)` — gloas
+  - `update_payload_expected_builder_withdrawals(state, builder_withdrawals)` —
+    gloas
   - `update_builder_pending_withdrawals(state, count)` — gloas
   - `update_pending_partial_withdrawals(state, count)` — electra
   - `update_next_withdrawal_builder_index(state, count)` — gloas
@@ -216,9 +214,11 @@ ______________________________________________________________________
                     +-----------------------------------------------------------+
                     |                process_withdrawals()                      |
                     |                                                           |
+                    | Builder list (BuilderWithdrawal):                         |
                     | 1. Builder pending withdrawals (from fee_recipient)       |
-                    | 2. Partial validator withdrawals                          |
-                    | 3. Builder sweep withdrawals (from execution_address)     |
+                    | 2. Builder sweep withdrawals (from execution_address)     |
+                    | Validator list (Withdrawal):                              |
+                    | 3. Partial validator withdrawals                          |
                     | 4. Validator sweep withdrawals                            |
                     +---------------------------+-------------------------------+
                                                 |
@@ -228,6 +228,8 @@ ______________________________________________________________________
                     +-----------------------------------------------------------+
                     | payload_expected_withdrawals[0..16]     : Container[]     |
                     |   .index, .validator_index, .address, .amount             |
+                    | payload_expected_builder_withdrawals[0..8] : Container[]  |
+                    |   .index, .builder_index, .address, .amount               |
                     | builders[*].balance                     : uint64          |
                     | balances[*]                             : uint64          |
                     | builder_pending_withdrawals             : Container[]     |

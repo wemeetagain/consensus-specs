@@ -17,12 +17,13 @@ def advance_past_finalization(spec, state):
 
 @with_gloas_and_later
 @spec_state_test
-def test_voluntary_exit__invalid__builder_index(spec, state):
-    """Test that a voluntary exit naming a builder index is invalid.
+def test_voluntary_exit__invalid__builder_signed(spec, state):
+    """Test that a voluntary exit cannot exit a builder.
 
     The voluntary-exit operation is validator-only (EIP-8282); builders exit
-    via the builder exit request. A builder-flagged index is out of range of
-    the validator registry.
+    via the builder exit request. There is no builder encoding in the
+    validator index space, so an exit signed by a builder's BLS key naming an
+    out-of-range index is simply invalid.
     """
     builder_index = 0
     pubkey = state.builders[builder_index].pubkey
@@ -32,7 +33,8 @@ def test_voluntary_exit__invalid__builder_index(spec, state):
     assert spec.is_active_builder(state, builder_index)
     assert spec.get_pending_balance_to_withdraw_for_builder(state, builder_index) == 0
 
-    validator_index = spec.convert_builder_index_to_validator_index(builder_index)
+    # Out of range of the validator registry; no index addresses a builder
+    validator_index = spec.ValidatorIndex(len(state.validators) + builder_index)
     voluntary_exit = spec.VoluntaryExit(
         epoch=spec.get_current_epoch(state),
         validator_index=validator_index,

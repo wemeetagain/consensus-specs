@@ -185,6 +185,7 @@ def upgrade_to_gloas(pre: fulu.BeaconState) -> BeaconState:
         ),
         # [New in Gloas:EIP7732]
         payload_expected_withdrawals=[],
+        payload_expected_builder_withdrawals=[],
         # [New in Gloas:EIP7732]
         ptc_window=initialize_ptc_window(pre),
     )
