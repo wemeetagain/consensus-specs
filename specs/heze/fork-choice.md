@@ -18,6 +18,7 @@
   - [New `record_payload_inclusion_list_satisfaction`](#new-record_payload_inclusion_list_satisfaction)
   - [New `is_payload_inclusion_list_satisfied`](#new-is_payload_inclusion_list_satisfied)
   - [Modified `should_extend_payload`](#modified-should_extend_payload)
+  - [Modified `get_slot_component_duration_ms`](#modified-get_slot_component_duration_ms)
   - [New `get_inclusion_list_due_ms`](#new-get_inclusion_list_due_ms)
 - [Handlers](#handlers)
   - [New `on_inclusion_list`](#new-on_inclusion_list)
@@ -33,9 +34,9 @@ This is the modification of the fork choice accompanying the Heze upgrade.
 
 ### Time parameters
 
-| Name                     | Value          | Duration                   |
-| ------------------------ | -------------- | -------------------------- |
-| `INCLUSION_LIST_DUE_BPS` | `Uint64(6667)` | ~67% of `SLOT_DURATION_MS` |
+| Name                     | Value          | Duration                        |
+| ------------------------ | -------------- | ------------------------------- |
+| `INCLUSION_LIST_DUE_BPS` | `Uint64(6667)` | ~67% of `SLOT_DURATION_MS_HEZE` |
 
 ## Protocols
 
@@ -242,6 +243,17 @@ def should_extend_payload(store: Store, root: Root) -> bool:
         or store.blocks[proposer_root].parent_root != root
         or is_parent_node_full(store, store.blocks[proposer_root])
     )
+```
+
+### Modified `get_slot_component_duration_ms`
+
+```python
+def get_slot_component_duration_ms(basis_points: Uint64) -> Uint64:
+    """
+    Calculate a slot component's duration using this fork's slot duration.
+    """
+    # [Modified in Heze]
+    return basis_points * SLOT_DURATION_MS_HEZE // BASIS_POINTS
 ```
 
 ### New `get_inclusion_list_due_ms`

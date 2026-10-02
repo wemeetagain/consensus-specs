@@ -9,7 +9,7 @@
   - [Slot duration schedule](#slot-duration-schedule)
 - [Helpers](#helpers)
   - [Misc](#misc)
-    - [New `get_slot_duration_ms`](#new-get_slot_duration_ms)
+    - [Modified `get_slot_duration_ms`](#modified-get_slot_duration_ms)
     - [Modified `compute_time_at_slot_ms`](#modified-compute_time_at_slot_ms)
     - [Modified `compute_slot_at_time_ms`](#modified-compute_slot_at_time_ms)
   - [Beacon state accessors](#beacon-state-accessors)
@@ -85,13 +85,14 @@ transition, so reaching a lower target requires advance coordination.
 
 ### Misc
 
-#### New `get_slot_duration_ms`
+#### Modified `get_slot_duration_ms`
 
 ```python
 def get_slot_duration_ms(epoch: Epoch) -> Uint64:
     """
     Return the slot duration in effect at ``epoch``.
     """
+    # [Modified in EIP8198]
     for entry in reversed(SLOT_DURATION_SCHEDULE):
         if epoch >= entry["EPOCH"]:
             break

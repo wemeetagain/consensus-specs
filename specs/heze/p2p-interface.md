@@ -121,6 +121,9 @@ def compute_fork_version(epoch: Epoch) -> Version:
 
 ## The gossip domain: gossipsub
 
+*[Modified in Heze]* The `seen_ttl` gossipsub parameter is
+`milliseconds_to_seconds(SLOT_DURATION_MS_HEZE * SLOTS_PER_EPOCH * 2)`.
+
 ### Topics and messages
 
 The `execution_payload_bid` topic is modified to support Heze bids.
