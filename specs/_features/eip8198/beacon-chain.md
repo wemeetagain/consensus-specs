@@ -83,8 +83,8 @@ def get_slot_schedule() -> Sequence[dict[str, Uint64]]:
     Return the slot duration schedule derived from fork configuration.
     """
     schedule = [
-        {"EPOCH": GENESIS_EPOCH, "SLOT_MS": SLOT_DURATION_MS},
-        {"EPOCH": EIP8198_FORK_EPOCH, "SLOT_MS": SLOT_DURATION_MS_EIP8198},
+        {"EPOCH": GENESIS_EPOCH, "SLOT_DURATION_MS": SLOT_DURATION_MS},
+        {"EPOCH": EIP8198_FORK_EPOCH, "SLOT_DURATION_MS": SLOT_DURATION_MS_EIP8198},
     ]
     return [entry for entry in schedule if entry["EPOCH"] != FAR_FUTURE_EPOCH]
 ```
@@ -99,7 +99,7 @@ def get_slot_duration_ms(epoch: Epoch) -> Uint64:
     for entry in reversed(get_slot_schedule()):
         if epoch >= entry["EPOCH"]:
             break
-    return entry["SLOT_MS"]
+    return entry["SLOT_DURATION_MS"]
 ```
 
 #### Modified `compute_time_at_slot_ms`
@@ -116,7 +116,7 @@ def compute_time_at_slot_ms(genesis_time_ms: Uint64, slot: Slot) -> Uint64:
         entry_slot = compute_start_slot_at_epoch(Epoch(entry["EPOCH"]))
         if entry_slot < end_slot:
             slots = end_slot - entry_slot
-            time_ms += slots * entry["SLOT_MS"]
+            time_ms += slots * entry["SLOT_DURATION_MS"]
             end_slot = entry_slot
     return time_ms
 ```
@@ -135,7 +135,7 @@ def compute_slot_at_time_ms(genesis_time_ms: Uint64, time_ms: Uint64) -> Slot:
         if time_ms >= entry_time_ms:
             break
     time_diff_ms = time_ms - entry_time_ms
-    slots = time_diff_ms // entry["SLOT_MS"]
+    slots = time_diff_ms // entry["SLOT_DURATION_MS"]
     return entry_slot + slots
 ```
 
