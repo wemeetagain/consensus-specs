@@ -86,6 +86,7 @@ def get_slot_schedule() -> Sequence[dict[str, Uint64]]:
         {"EPOCH": GENESIS_EPOCH, "SLOT_DURATION_MS": SLOT_DURATION_MS},
         {"EPOCH": EIP8198_FORK_EPOCH, "SLOT_DURATION_MS": SLOT_DURATION_MS_EIP8198},
     ]
+    # Skip unscheduled forks to avoid overflow when converting epochs to slots.
     return [entry for entry in schedule if entry["EPOCH"] != FAR_FUTURE_EPOCH]
 ```
 
