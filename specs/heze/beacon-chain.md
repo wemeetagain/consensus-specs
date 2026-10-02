@@ -12,8 +12,6 @@
   - [Domains](#domains)
 - [Presets](#presets)
   - [Inclusion list committee](#inclusion-list-committee)
-- [Configs](#configs)
-  - [Time parameters](#time-parameters)
 - [Containers](#containers)
   - [New containers](#new-containers)
     - [`InclusionList`](#inclusionlist)
@@ -23,11 +21,6 @@
     - [`SignedExecutionPayloadBid`](#signedexecutionpayloadbid)
     - [`BeaconState`](#beaconstate)
 - [Helpers](#helpers)
-  - [Misc](#misc)
-    - [New `get_slot_schedule`](#new-get_slot_schedule)
-    - [New `get_slot_duration_ms`](#new-get_slot_duration_ms)
-    - [Modified `compute_time_at_slot_ms`](#modified-compute_time_at_slot_ms)
-    - [Modified `compute_slot_at_time_ms`](#modified-compute_slot_at_time_ms)
   - [Predicates](#predicates)
     - [New `is_valid_inclusion_list_signature`](#new-is_valid_inclusion_list_signature)
   - [Beacon state accessors](#beacon-state-accessors)
@@ -86,14 +79,6 @@ class InclusionListCommittee(Vector[ValidatorIndex]):
 | Name                            | Value                 |
 | ------------------------------- | --------------------- |
 | `INCLUSION_LIST_COMMITTEE_SIZE` | `Uint64(2**4)` (= 16) |
-
-## Configs
-
-### Time parameters
-
-| Name                    | Value           |
-| ----------------------- | --------------- |
-| `SLOT_DURATION_MS_HEZE` | `Uint64(12000)` |
 
 ## Containers
 
@@ -206,77 +191,6 @@ class BeaconState(ProgressiveContainer):
 ```
 
 ## Helpers
-
-### Misc
-
-#### New `get_slot_schedule`
-
-```python
-def get_slot_schedule() -> Sequence[dict[str, Uint64]]:
-    """
-    Return the slot duration schedule derived from fork configuration.
-    """
-    return [
-        {"EPOCH": GENESIS_EPOCH, "SLOT_MS": SLOT_DURATION_MS},
-        {"EPOCH": HEZE_FORK_EPOCH, "SLOT_MS": SLOT_DURATION_MS_HEZE},
-    ]
-```
-
-#### New `get_slot_duration_ms`
-
-```python
-def get_slot_duration_ms(epoch: Epoch) -> Uint64:
-    """
-    Return the slot duration in effect at ``epoch``.
-    """
-    for entry in reversed(get_slot_schedule()):
-        if epoch >= entry["EPOCH"]:
-            break
-    return entry["SLOT_MS"]
-```
-
-#### Modified `compute_time_at_slot_ms`
-
-```python
-def compute_time_at_slot_ms(genesis_time_ms: Uint64, slot: Slot) -> Uint64:
-    """
-    Return the Unix time in milliseconds at the start of ``slot``.
-    """
-    # [Modified in Heze]
-    end_slot = slot
-    time_ms = genesis_time_ms
-    for entry in reversed(get_slot_schedule()):
-        if entry["EPOCH"] > compute_epoch_at_slot(end_slot):
-            continue
-        entry_slot = compute_start_slot_at_epoch(Epoch(entry["EPOCH"]))
-        time_ms += (end_slot - entry_slot) * entry["SLOT_MS"]
-        end_slot = entry_slot
-    return Uint64(time_ms)
-```
-
-#### Modified `compute_slot_at_time_ms`
-
-```python
-def compute_slot_at_time_ms(genesis_time_ms: Uint64, time_ms: Uint64) -> Slot:
-    """
-    Return the slot at Unix time ``time_ms``.
-    """
-    # [Modified in Heze]
-    schedule = get_slot_schedule()
-    slot = GENESIS_SLOT
-    time_diff_ms = time_ms - genesis_time_ms
-    for index, entry in enumerate(schedule):
-        slots = time_diff_ms // entry["SLOT_MS"]
-        if index + 1 == len(schedule):
-            break
-        next_epoch = Epoch(schedule[index + 1]["EPOCH"])
-        if compute_epoch_at_slot(Slot(slot + slots)) < next_epoch:
-            break
-        next_slot = compute_start_slot_at_epoch(next_epoch)
-        time_diff_ms -= (next_slot - slot) * entry["SLOT_MS"]
-        slot = next_slot
-    return Slot(slot + slots)
-```
 
 ### Predicates
 
