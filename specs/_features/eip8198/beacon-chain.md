@@ -82,10 +82,11 @@ def get_slot_schedule() -> Sequence[dict[str, Uint64]]:
     """
     Return the slot duration schedule derived from fork configuration.
     """
-    return [
+    schedule = [
         {"EPOCH": GENESIS_EPOCH, "SLOT_MS": SLOT_DURATION_MS},
         {"EPOCH": EIP8198_FORK_EPOCH, "SLOT_MS": SLOT_DURATION_MS_EIP8198},
     ]
+    return [entry for entry in schedule if entry["EPOCH"] != FAR_FUTURE_EPOCH]
 ```
 
 #### New `get_slot_duration_ms`
@@ -112,12 +113,12 @@ def compute_time_at_slot_ms(genesis_time_ms: Uint64, slot: Slot) -> Uint64:
     end_slot = slot
     time_ms = genesis_time_ms
     for entry in reversed(get_slot_schedule()):
-        if entry["EPOCH"] > compute_epoch_at_slot(end_slot):
-            continue
         entry_slot = compute_start_slot_at_epoch(Epoch(entry["EPOCH"]))
-        time_ms += (end_slot - entry_slot) * entry["SLOT_MS"]
-        end_slot = entry_slot
-    return Uint64(time_ms)
+        if entry_slot < end_slot:
+            slots = end_slot - entry_slot
+            time_ms += slots * entry["SLOT_MS"]
+            end_slot = entry_slot
+    return time_ms
 ```
 
 #### Modified `compute_slot_at_time_ms`
@@ -128,20 +129,14 @@ def compute_slot_at_time_ms(genesis_time_ms: Uint64, time_ms: Uint64) -> Slot:
     Return the slot at Unix time ``time_ms``.
     """
     # [Modified in EIP8198]
-    schedule = get_slot_schedule()
-    slot = GENESIS_SLOT
-    time_diff_ms = time_ms - genesis_time_ms
-    for index, entry in enumerate(schedule):
-        slots = time_diff_ms // entry["SLOT_MS"]
-        if index + 1 == len(schedule):
+    for entry in reversed(get_slot_schedule()):
+        entry_slot = compute_start_slot_at_epoch(Epoch(entry["EPOCH"]))
+        entry_time_ms = compute_time_at_slot_ms(genesis_time_ms, entry_slot)
+        if time_ms >= entry_time_ms:
             break
-        next_epoch = Epoch(schedule[index + 1]["EPOCH"])
-        if compute_epoch_at_slot(Slot(slot + slots)) < next_epoch:
-            break
-        next_slot = compute_start_slot_at_epoch(next_epoch)
-        time_diff_ms -= (next_slot - slot) * entry["SLOT_MS"]
-        slot = next_slot
-    return Slot(slot + slots)
+    time_diff_ms = time_ms - entry_time_ms
+    slots = time_diff_ms // entry["SLOT_MS"]
+    return entry_slot + slots
 ```
 
 ### Beacon state accessors
